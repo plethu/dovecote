@@ -1,0 +1,21 @@
+id: rust-block-spacing
+language: Rust
+severity: error
+message: Add a blank line after this control-flow block.
+note: |
+  Heuristic for missing blank lines after control-flow closing braces. Run
+  `cargo fmt` first; rustfmt preserves manual blanks.
+rule:
+  any:
+    - all:
+        - kind: block
+        - regex: '(?s)\blet\b[^\n]*\belse\s*\{.*?\};\n[ \t]*(?:let |if |match |for |while |loop |return\b)'
+    - all:
+        - kind: block
+        - regex: '(?s)= if[^\n{]*\{[^\n]*\} else \{[^\n]*\};\n[ \t]*(?:let |if |match |for |while |loop |return\b)'
+    - all:
+        - kind: block
+        - regex: '(?s)\n[ \t]+\}\n[ \t]+(?:let |if |match |for |while |loop |return\b)'
+    - all:
+        - kind: block
+        - regex: '(?s)\n[ \t]+\},\n[ \t]+(?:[A-Z_][A-Z0-9_]*|_)\s*=>'

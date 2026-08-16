@@ -1,0 +1,14 @@
+id: rust-if-let-policy-cascade-dense
+valid:
+  - |
+    fn two(a: Option<i32>, b: Option<i32>) {
+        if let Some(x) = a { let _ = x; }
+        if let Some(y) = b { let _ = y; }
+    }
+invalid:
+  - |
+    fn three(a: Option<i32>, b: Option<i32>, c: Option<i32>) {
+        if let Some(x) = a { let _ = x; }
+        if let Some(y) = b { let _ = y; }
+        if let Some(z) = c { let _ = z; }
+    }

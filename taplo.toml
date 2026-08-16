@@ -1,0 +1,5 @@
+include = ["**/*.toml"]
+exclude = [".git/**", "target/**"]
+
+[formatting]
+reorder_keys = false

@@ -1,0 +1,8 @@
+# Structural opacity rules for Rust. See tools/ast-grep/README.md.
+ruleDirs:
+  - tools/ast-grep/rules
+testConfigs:
+  - testDir: tools/ast-grep/tests
+languageGlobs:
+  rust:
+    - "**/*.rs"

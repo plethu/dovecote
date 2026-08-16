@@ -1,0 +1,21 @@
+id: rust-if-let-policy-cascade
+language: Rust
+severity: warning
+message: Ordered if-let Some(...) guards often encode priority policy by statement order.
+note: Suppress this rule when the order is not policy.
+rule:
+  kind: expression_statement
+  all:
+    - has:
+        pattern: |
+          if let Some($A) = $E0 {
+            $$$B0
+          }
+    - precedes:
+        stopBy: neighbor
+        kind: expression_statement
+        has:
+          pattern: |
+            if let Some($B) = $E1 {
+              $$$B1
+            }

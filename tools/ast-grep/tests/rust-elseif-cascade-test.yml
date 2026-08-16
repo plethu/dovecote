@@ -1,0 +1,17 @@
+id: rust-elseif-cascade
+valid:
+  - |
+    fn two(x: i32) -> i32 {
+        if x == 0 { 0 } else if x == 1 { 1 } else { 2 }
+    }
+invalid:
+  - |
+    fn three(x: i32) -> i32 {
+        if x == 0 {
+            0
+        } else if x == 1 {
+            1
+        } else if x == 2 {
+            2
+        }
+    }

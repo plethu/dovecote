@@ -1,0 +1,29 @@
+[workspace]
+members = [
+  "crates/carrier",
+  "crates/carrier-sqlx-postgres",
+  "crates/carrier-sqlx-mysql",
+  "crates/carrier-sqlx-sqlite",
+]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.94"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://codeberg.org/plethu/carrier"
+homepage = "https://codeberg.org/plethu/carrier"
+keywords = ["transactional-outbox", "cloudevents", "sqlx"]
+categories = ["database", "asynchronous"]
+
+[workspace.dependencies]
+base64 = "0.22.1"
+carrier = { path = "crates/carrier", version = "0.1.0" }
+mime = "0.3.17"
+serde = { version = "1.0.219", features = ["derive"] }
+serde_json = { version = "1.0.140", features = ["preserve_order"] }
+sqlx = { version = "0.8.6", default-features = false }
+thiserror = "2.0.12"
+time = { version = "0.3.41", features = ["formatting", "macros", "parsing"] }
+url = "2.5.4"

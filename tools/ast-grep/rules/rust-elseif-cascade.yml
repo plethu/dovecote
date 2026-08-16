@@ -1,0 +1,14 @@
+id: rust-elseif-cascade
+language: Rust
+severity: error
+message: Long if/else-if cascade may hide priority in branch order; prefer match on an enum or explicit dispatch.
+note: "Suppress a true positive with // ast-grep-ignore: rust-elseif-cascade."
+rule:
+  pattern: |
+    if $A {
+      $$$THEN0
+    } else if $B {
+      $$$THEN1
+    } else if $C {
+      $$$THEN2
+    }

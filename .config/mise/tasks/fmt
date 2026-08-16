@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:?mise did not set MISE_PROJECT_ROOT}"
+exec just fmt

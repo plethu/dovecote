@@ -1,0 +1,30 @@
+id: rust-if-let-policy-cascade-dense
+language: Rust
+severity: error
+message: Three or more ordered if-let Some(...) guards may hide priority in statement order.
+note: "Suppress a true positive with // ast-grep-ignore: rust-if-let-policy-cascade-dense."
+rule:
+  kind: expression_statement
+  all:
+    - has:
+        pattern: |
+          if let Some($A) = $E0 {
+            $$$B0
+          }
+    - precedes:
+        stopBy: neighbor
+        kind: expression_statement
+        all:
+          - has:
+              pattern: |
+                if let Some($B) = $E1 {
+                  $$$B1
+                }
+          - precedes:
+              stopBy: neighbor
+              kind: expression_statement
+              has:
+                pattern: |
+                  if let Some($C) = $E2 {
+                    $$$B2
+                  }

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "${MISE_PROJECT_ROOT:?mise did not set MISE_PROJECT_ROOT}"
+tools/check-loc.sh
+ast-grep test --config sgconfig.yml --skip-snapshot-tests
+ast-grep scan --config sgconfig.yml

@@ -1,0 +1,12 @@
+id: rust-if-let-policy-cascade
+valid:
+  - |
+    fn one(a: Option<i32>) {
+        if let Some(x) = a { let _ = x; }
+    }
+invalid:
+  - |
+    fn two(a: Option<i32>, b: Option<i32>) {
+        if let Some(x) = a { let _ = x; }
+        if let Some(y) = b { let _ = y; }
+    }

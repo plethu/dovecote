@@ -1,0 +1,18 @@
+id: rust-block-spacing
+valid:
+  - |
+    fn spaced_if() {
+        if true {
+            return;
+        }
+
+        let x = 1;
+    }
+invalid:
+  - |
+    fn tight_if() {
+        if true {
+            return;
+        }
+        let x = 1;
+    }
