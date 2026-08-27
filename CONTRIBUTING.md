@@ -99,5 +99,6 @@ promotional prose. Do not add agent attribution trailers.
 ## Publishing
 
 Publish `dovecote` first and wait for crates.io to serve the new version. Then
-run `cargo package --package <adapter> --locked` without `--no-verify` for each
-SQLx adapter. Publish an adapter only after that check passes.
+run `DOVECOTE_VERIFY_PUBLISHED_ADAPTERS=1 mise run check`. That mode packages
+each SQLx adapter normally against the registry core, without `--no-verify`.
+Publish an adapter only after that check passes.

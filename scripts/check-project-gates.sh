@@ -71,16 +71,21 @@ echo "== Cargo package archives =="
   cd "$repo_root"
   echo "-- verifying the runtime-free core archive --"
   cargo package --package dovecote --allow-dirty --locked
-  echo "-- constructing workspace archives (adapters not locally verified) --"
-  cargo package --workspace --allow-dirty --no-verify --locked
-  cat <<'EOF'
-Adapter archives were constructed with --no-verify because their normalized
-manifests depend on the unpublished dovecote crate. Before publishing any
-adapter, publish dovecote first, wait for it to be available from the registry,
-then run `cargo package --package <adapter> --locked` without --no-verify for
-each adapter. Only after those verification runs pass may the adapters be
-published.
+  if [[ "${DOVECOTE_VERIFY_PUBLISHED_ADAPTERS:-0}" == "1" ]]; then
+    echo "-- verifying adapter archives against the registry core --"
+    cargo package --package dovecote-sqlx-postgres --allow-dirty --locked
+    cargo package --package dovecote-sqlx-mysql --allow-dirty --locked
+    cargo package --package dovecote-sqlx-sqlite --allow-dirty --locked
+  else
+    echo "-- constructing pre-publication workspace archives --"
+    cargo package --workspace --allow-dirty --no-verify --locked
+    cat <<'EOF'
+Adapter archives were constructed without verification because their normalized
+manifests require the matching registry core. After publishing that core and
+waiting for registry availability, rerun this gate with
+`DOVECOTE_VERIFY_PUBLISHED_ADAPTERS=1` for release evidence.
 EOF
+  fi
 )
 
 echo "== git diff check =="

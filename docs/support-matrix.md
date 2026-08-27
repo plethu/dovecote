@@ -1,9 +1,9 @@
 # Backend support matrix
 
-Evidence snapshot: 2026-08-27. Dovecote remains pre-release and advertises no
-database backend until the corresponding CI job and every release fixture in
-[SPEC.md](../SPEC.md) pass. A green adapter test run is evidence for that exact
-server/runtime combination; it is not a claim for a neighbouring release.
+Evidence snapshot: 2026-08-27. Dovecote 0.1.0 advertises the exact database
+versions below. Its release CI, complete-history fixtures, independent review,
+and normal registry-backed package verification passed for each adapter. This
+is not a claim for a neighbouring database release.
 
 All jobs use SQLx 0.9.0 and run the workspace against Rust 1.94.0 (the MSRV)
 and latest stable Rust. The backend job sets only its own `*_REQUIRED=1`
@@ -13,11 +13,11 @@ accidental service or a missing URL.
 
 | Backend | Exact CI target | Required settings recorded by the test contract | Current evidence | Release status |
 | --- | --- | --- | --- | --- |
-| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override | adapter/race suite exists; CI job is the required reproducible run | not advertised |
-| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | adapter and live service evidence exists; CI job is the required reproducible run | not advertised |
-| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series | exact official image is exercised separately from MySQL 8.4; CI job is the required reproducible run | not advertised |
-| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | adapter/live-service job is separate from MySQL; the pinned 10.3.17-to-11.8.6 maintenance-window fixture passed locally on 2026-08-27 and remains an exact CI release gate | not advertised |
-| SQLite | linked runtime observed locally via SQLx: `3.46.0`; CI prints the exact version returned by `SELECT sqlite_version()` from the linked runtime | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots | focused linked-runtime integration test, migration smoke test, and full local adapter suite exist; CI linked-runtime output remains a release gate | not advertised |
+| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override | adapter/race suite and complete-history fixture passed in release CI | advertised in 0.1.0 |
+| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | adapter/live-service suite and complete-history fixture passed in release CI | advertised in 0.1.0 |
+| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series | exact official image and complete-history fixture passed separately from MySQL 8.4 in release CI | advertised in 0.1.0 |
+| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | adapter/live-service suite and pinned 10.3.17-to-11.8.6 maintenance-window fixture passed in release CI | advertised in 0.1.0; existing Keepsake deployments use the maintenance-window route below |
+| SQLite | SQLx linked runtime `3.46.0` | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots | linked-runtime integration suite and migration smoke test passed on stable and MSRV; complete-history fixture passed on stable | advertised in 0.1.0 |
 
 The three adapters also expose the migration-only
 `import_for_migration` and `finalize_pending_delivery_for_migration`
@@ -57,8 +57,9 @@ or that every MariaDB release is interchangeable. Existing Keepsake users must
 follow the [maintenance-window route in the migration runbook](migrations/keepsake-gatekeep.md#mariadb-maintenance-window-route-for-existing-keepsake-deployments),
 including a verified backup, claim resolution or fencing, complete-history
 import, zero-delta reconciliation, and read-only retention of legacy tables.
-The MariaDB adapter remains unadvertised until the complete CI and release
-review evidence passes.
+The 0.1.0 evidence supports that exact maintenance-window route on MariaDB
+11.8.6. It does not support replaying the historical Keepsake migration directly
+on MariaDB 11.8.6.
 
 ## Database release gate
 
@@ -104,6 +105,4 @@ CDC is optional and remains unadvertised. Its missing connector/converter
 fixtures and live connector validation do not block database adapter evidence,
 but they are mandatory before Dovecote advertises CDC for any backend. If CDC
 is advertised later, fixtures must cover each advertised backend and prove the
-final transformed event, not only the raw Debezium envelope. Until the database
-backend gates above are present in CI, the status above must remain “not
-advertised”.
+final transformed event, not only the raw Debezium envelope.
