@@ -2,12 +2,9 @@
 
 ## [Unreleased]
 
-The first Dovecote release is not published. Local and live backend gates,
-complete Keepsake/Gatekeep migration fixtures, independent reviews, and the
-private security-reporting route are complete. Publication follows an
-exact-revision GitHub CI run and the documented registry order.
+No changes yet.
 
-## [0.1.0] - Unreleased
+## [0.1.0] - 2026-08-27
 
 ### Added
 
@@ -31,8 +28,8 @@ exact-revision GitHub CI run and the documented registry order.
   provide FIFO or exactly-once publication.
 - Delivery is at least once after an ambiguous send. Consumers must deduplicate
   the CloudEvents `source + id` identity.
-- No database backend or CDC integration is advertised until its exact release
-  gates and required fixtures pass. The Debezium configuration in this
-  repository is a reference fixture, not live CDC evidence.
+- Backend support is version-specific and recorded in the support matrix. The
+  Debezium configuration in this repository is a reference fixture, not live
+  CDC evidence.
 - Historical migrations are forward-only and remain byte-identical; legacy
   audit tables are not automatically dropped during sibling-library migration.
