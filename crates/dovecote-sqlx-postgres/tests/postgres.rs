@@ -954,7 +954,7 @@ async fn expired_claims_reclaim_and_counter_overflow_rolls_back_when_configured(
             adapter.ack(expired_id, &wrong_token).await,
             Err(MutationError::LostClaim)
         ));
-        query("UPDATE dovecote_deliveries SET claim_expires_at = CURRENT_TIMESTAMP - INTERVAL '1 second' WHERE event_row_id = $1")
+        query("UPDATE dovecote_deliveries SET claim_expires_at = clock_timestamp() - INTERVAL '1 second' WHERE event_row_id = $1")
             .bind(expired_id.get())
             .execute(&database.pool)
             .await?;

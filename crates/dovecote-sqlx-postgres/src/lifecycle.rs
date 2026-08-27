@@ -209,43 +209,53 @@ async fn mutate(
         .await
         .map_err(|source| MutationError::sql("begin mutation transaction", source))?;
 
-    // The common case is one conditional update and commit.  The statement
-    // itself materializes a target-row lock before evaluating the database
-    // clock, so a worker blocked behind a lease that expires is never allowed
-    // to mutate using an instant from before the lock wait.  Only a zero-row
-    // result needs the classification path below.
-    let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
-    if affected == 1 {
-        return transaction
+    let result: Result<(), MutationError> = async {
+        // The common case is one conditional update and commit.  The statement
+        // itself materializes a target-row lock before evaluating the database
+        // clock, so a worker blocked behind a lease that expires is never allowed
+        // to mutate using an instant from before the lock wait.  Only a zero-row
+        // result needs the classification path below.
+        let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
+        if affected == 1 {
+            return Ok(());
+        }
+
+        let delivery = lock_delivery(&mut transaction, row_id).await?;
+
+        classify_delivery(&delivery, claim_token)?;
+
+        let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
+        if affected != 1 {
+            // The row remains locked.  A second lock/clock read distinguishes a
+            // lease that expired during the retry from an unexpected database-side
+            // no-op; the latter remains an actionable SQL error.
+            let latest = lock_delivery(&mut transaction, row_id).await?;
+            classify_delivery(&latest, claim_token).map_err(|error| match error {
+                MutationError::LostClaim | MutationError::IllegalTransition { .. } => error,
+                other => other,
+            })?;
+            return Err(MutationError::sql(
+                "conditional delivery mutation",
+                sqlx::Error::Protocol(
+                    "locked claimed delivery did not satisfy mutation".to_owned(),
+                ),
+            ));
+        }
+
+        Ok(())
+    }
+    .await;
+
+    match result {
+        Ok(()) => transaction
             .commit()
             .await
-            .map_err(|source| MutationError::sql("commit mutation transaction", source));
+            .map_err(|source| MutationError::sql("commit mutation transaction", source)),
+        Err(error) => {
+            let _ = transaction.rollback().await;
+            Err(error)
+        }
     }
-
-    let delivery = lock_delivery(&mut transaction, row_id).await?;
-
-    classify_delivery(&delivery, claim_token)?;
-
-    let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
-    if affected != 1 {
-        // The row remains locked.  A second lock/clock read distinguishes a
-        // lease that expired during the retry from an unexpected database-side
-        // no-op; the latter remains an actionable SQL error.
-        let latest = lock_delivery(&mut transaction, row_id).await?;
-        classify_delivery(&latest, claim_token).map_err(|error| match error {
-            MutationError::LostClaim | MutationError::IllegalTransition { .. } => error,
-            other => other,
-        })?;
-        return Err(MutationError::sql(
-            "conditional delivery mutation",
-            sqlx::Error::Protocol("locked claimed delivery did not satisfy mutation".to_owned()),
-        ));
-    }
-
-    transaction
-        .commit()
-        .await
-        .map_err(|source| MutationError::sql("commit mutation transaction", source))
 }
 
 async fn execute_mutation(

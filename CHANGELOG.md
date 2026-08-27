@@ -4,8 +4,8 @@
 
 The first Dovecote release is not published. Local and live backend gates,
 complete Keepsake/Gatekeep migration fixtures, independent reviews, and the
-private security-reporting route are complete. Exact-revision GitHub CI and
-publication remain.
+private security-reporting route are complete. Publication follows an
+exact-revision GitHub CI run and the documented registry order.
 
 ## [0.1.0] - Unreleased
 
