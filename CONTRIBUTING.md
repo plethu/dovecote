@@ -95,3 +95,9 @@ execution. They do not replace a maintainer's direction, authorship, review,
 or responsibility for the resulting contract. Check generated changes against
 the repository and remove unsupported claims, invented citations, and generic
 promotional prose. Do not add agent attribution trailers.
+
+## Publishing
+
+Publish `dovecote` first and wait for crates.io to serve the new version. Then
+run `cargo package --package <adapter> --locked` without `--no-verify` for each
+SQLx adapter. Publish an adapter only after that check passes.
