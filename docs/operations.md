@@ -24,6 +24,13 @@ invitation to repair tables or to continue with a guessed schema.
 | MySQL or MariaDB | `dovecote_sqlx_mysql::MIGRATIONS`; `dovecote_sqlx_mysql::check_schema(&pool).await` | Detects the server family and verifies the exact dialect-sensitive shape. Both tables must be InnoDB. MySQL evidence does not cover MariaDB. |
 | SQLite | `dovecote_sqlx_sqlite::MIGRATIONS`; `dovecote_sqlx_sqlite::check_schema(&pool).await` | Creates only the two domain tables. Enable foreign keys on every connection. Use `SqliteDovecote::begin_write`/`begin_enqueue` for the caller transaction. |
 
+The MySQL/MariaDB migration creates two validation triggers. The account that
+installs the schema therefore needs trigger DDL authority. On a MySQL server
+with binary logging enabled, an administrator may also need to enable
+`log_bin_trust_function_creators` for the installation, according to the
+deployment's replication policy. The ordinary application account does not
+need that setting merely to use an already-installed Dovecote schema.
+
 The SQL is available as `migration.sql()` on each public migration artifact.
 The application migration runner may need to split or execute the artifact
 according to its own backend rules; the adapter does not assume that one
