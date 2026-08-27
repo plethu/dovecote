@@ -1,4 +1,4 @@
-# Carrier acceptance specification
+# Dovecote acceptance specification
 
 - Status: accepted design for initial implementation
 - Specification date: 16 August 2026
@@ -9,37 +9,35 @@
 
 ## 1. Purpose and authority
 
-Carrier is a storage-only transactional outbox for Keepsake, Gatekeep, and
+Dovecote is a storage-only transactional outbox for Keepsake, Gatekeep, and
 other applications that need to commit an event beside application state and
 deliver it later. It owns durable insertion, deterministic inspection, leased
 claims, claim-token fencing, retry state, and quarantine. It does not deliver
 messages itself.
 
-This document is the acceptance contract for Carrier's first implementation.
+This document is the acceptance contract for Dovecote's first implementation.
 It is standalone: an implementer must not need the earlier ecosystem plan to
 resolve an API, schema, lifecycle, interoperability, migration, or testing
 decision described here.
 
-The project was previously called Carry. Carrier is now the canonical project
-and package-family name. The historical wording in
-`send-app-ecosystem-foundations.md` remains unchanged until a separate edit.
+Dovecote is the canonical project and package-family name.
 
 Normative words such as **MUST**, **MUST NOT**, **SHOULD**, and **MAY** carry
 their usual RFC 2119 meanings.
 
 ## 2. Scope and guarantees
 
-Carrier provides one logical delivery lifecycle for each stored event:
+Dovecote provides one logical delivery lifecycle for each stored event:
 
 1. an application inserts an event using its existing database transaction;
 2. committing that transaction makes both the application's state and the
-   Carrier event visible;
+   Dovecote event visible;
 3. a worker may claim the event under a bounded lease;
 4. only the current, unexpired claim may renew, acknowledge, retry, release, or
    quarantine it;
 5. an expired claim may be reclaimed atomically with a fresh token.
 
-Carrier guarantees:
+Dovecote guarantees:
 
 - atomic enqueue when the caller commits its transaction;
 - rollback of the enqueue when the caller rolls back;
@@ -52,7 +50,7 @@ Carrier guarantees:
 - deterministic row-ID paging; and
 - backend-specific SQL tested against a shared conformance contract.
 
-Carrier does **not** guarantee:
+Dovecote does **not** guarantee:
 
 - delivery, exactly-once effects, or exactly-once publication;
 - FIFO ordering, including within a stream or partition key;
@@ -76,26 +74,26 @@ The package family is:
 
 | Crate | Responsibility |
 |---|---|
-| `carrier` | Validated events and extensions, claims, failures, states, outcomes, and deterministic CloudEvents projections. |
-| `carrier-sqlx-postgres` | PostgreSQL schema, migrations, transaction-bound enqueue, claims, lifecycle mutations, and paging. |
-| `carrier-sqlx-mysql` | MySQL and MariaDB schemas, migrations, dialect handling, enqueue, claims, lifecycle mutations, and paging. |
-| `carrier-sqlx-sqlite` | SQLite schema, migrations, enqueue, claims, lifecycle mutations, paging, and bounded busy handling. |
+| `dovecote` | Validated events and extensions, claims, failures, states, outcomes, and deterministic CloudEvents projections. |
+| `dovecote-sqlx-postgres` | PostgreSQL schema, migrations, transaction-bound enqueue and migration import, claims, lifecycle mutations, and paging. |
+| `dovecote-sqlx-mysql` | MySQL and MariaDB schemas, migrations, dialect handling, enqueue and migration import, claims, lifecycle mutations, and paging. |
+| `dovecote-sqlx-sqlite` | SQLite schema, migrations, enqueue and migration import, claims, lifecycle mutations, paging, and bounded busy handling. |
 
 All crates use `MIT OR Apache-2.0`. The workspace declares Rust 1.94 as its
 initial MSRV and tests that MSRV in CI. Raising the MSRV follows the published
 MSRV policy and is not coupled to durable schema versions.
 
-The `carrier` crate MUST be synchronous, runtime-free, and SQLx-free. It MAY
+The `dovecote` crate MUST be synchronous, runtime-free, and SQLx-free. It MAY
 depend privately on focused parsing or serialization crates, but public event,
-URI, media-type, extension, and projection types are Carrier-owned. It MUST NOT
+URI, media-type, extension, and projection types are Dovecote-owned. It MUST NOT
 expose a CloudEvents SDK type or a CloudEvents SDK as a public dependency.
 `time::OffsetDateTime` is the deliberate public type for instants;
 `std::time::Duration` is used for leases, delay, and backoff.
 
-The adapter crates expose concrete SQLx entry points. Carrier does not define a
+The adapter crates expose concrete SQLx entry points. Dovecote does not define a
 common async repository, store, or worker trait in version 1. A reusable worker
 can be generic over its own narrow closure or adapter, but that concern does
-not widen Carrier's public storage contract.
+not widen Dovecote's public storage contract.
 
 ## 4. Core event model
 
@@ -128,8 +126,8 @@ The exact final Rust field visibility and constructors may use accessors, but
 the model and distinctions above are public contract. In particular, absent
 data, present empty data, JSON data, and opaque binary data are distinct.
 
-Carrier fixes `specversion` to `1.0` for schema version 1. Callers do not set it.
-Carrier validates the CloudEvents 1.0 required attributes at construction:
+Dovecote fixes `specversion` to `1.0` for schema version 1. Callers do not set it.
+Dovecote validates the CloudEvents 1.0 required attributes at construction:
 
 - `id` is a non-empty CloudEvents String;
 - `source` is a non-empty URI-reference; an absolute URI is recommended;
@@ -150,7 +148,7 @@ omit it. Absent data and a zero-length binary value remain distinguishable in
 storage and projection.
 
 CloudEvents structured JSON permits an omitted `datacontenttype` to imply
-`application/json` for a `data` member. Carrier deliberately does not use that
+`application/json` for a `data` member. Dovecote deliberately does not use that
 permission for non-empty stored data: requiring an explicit media type is its
 stricter portable-storage profile, not a claim about the CloudEvents minimum.
 
@@ -165,9 +163,9 @@ topic or subject names, though an integration still owns the actual
 destination configuration.
 
 `partitionkey` is the registered CloudEvents partitioning extension when a
-CloudEvent is projected, but Carrier stores it in its own dedicated routing
+CloudEvent is projected, but Dovecote stores it in its own dedicated routing
 column. It is at most 255 UTF-8 bytes, has CloudEvents String validity, and is
-not part of Carrier's claim ordering. It MUST also appear as the
+not part of Dovecote's claim ordering. It MUST also appear as the
 `partitionkey` extension in structured and binary CloudEvents projections.
 Callers MUST NOT separately insert an extension named `partitionkey`.
 
@@ -198,11 +196,11 @@ pub enum ExtensionValue {
 }
 ```
 
-Carrier preserves the name, abstract type, and value. The durable extension
+Dovecote preserves the name, abstract type, and value. The durable extension
 encoding is a compact UTF-8 JSON object ordered lexicographically by extension
 name. Each member has exactly `type` and `value`; type is one of `boolean`,
 `integer`, `string`, `binary`, `uri`, `uri-reference`, or `timestamp`. Binary is
-padded RFC 4648 base64, timestamps use Carrier's canonical timestamp form,
+padded RFC 4648 base64, timestamps use Dovecote's canonical timestamp form,
 and all other values use their natural JSON or string form. This tagged form is
 part of durable schema version 1 and prevents a URI or binary value from being
 silently recovered as an ordinary string.
@@ -222,12 +220,12 @@ boundary.
 
 CloudEvents defines event size at the wire, but dynamic HTTP compression, TLS
 records, Kafka batching/compression, and lower protocol frames are chosen below
-Carrier's integration boundary and cannot be predicted before send. Carrier
+Dovecote's integration boundary and cannot be predicted before send. Dovecote
 therefore defines and enforces a logical, uncompressed binding size. It does not
 label an event portable from payload length alone or claim to count lower
 transport frames.
 
-`MAX_PORTABLE_EVENT_BYTES` is 65,536. Before insertion, Carrier computes an
+`MAX_PORTABLE_EVENT_BYTES` is 65,536. Before insertion, Dovecote computes an
 event-material upper bound as the greater of:
 
 1. the exact byte length of its structured JSON body plus the bytes in
@@ -244,7 +242,7 @@ HTTP and NATS bindings. Attribute names use the longer applicable `ce-<name>` or
 `ce_<name>` spelling. Absent data contributes zero body bytes; present empty data
 also contributes zero but remains distinct in the projection type.
 
-Carrier's default configured event limit rejects an event when this upper bound
+Dovecote's default configured event limit rejects an event when this upper bound
 exceeds `MAX_PORTABLE_EVENT_BYTES`. Passing that check means the logical
 CloudEvent material fits the 64 KiB profile. It explicitly excludes request
 lines and targets, routing subjects/topics, authentication and other application
@@ -255,27 +253,30 @@ Every integration MUST form its exact logical message—body, serialized
 CloudEvents headers, routing key, and application headers—and compare that with
 the destination's documented size-accounting rule and lower configured limit.
 It rejects or routes an oversized message elsewhere before transport send and
-never acknowledges it. Carrier does not promise a byte count for framing that
+never acknowledges it. Dovecote does not promise a byte count for framing that
 only the transport implementation or peer creates.
 
 Applications MAY configure a larger finite limit. The chosen limit is explicit
 at adapter construction, is enforced before insertion, and is recorded in
 operational documentation. Larger events are not portable by default: brokers,
 HTTP servers, CDC converters, and other intermediaries impose different
-ceilings. Carrier version 1 does not provide blob storage, payload chunking, or
+ceilings. Dovecote version 1 does not provide blob storage, payload chunking, or
 a claim-check service.
 
 ## 5. Durable schema
 
 ### 5.1 General rules
 
-Carrier owns exactly two domain tables: immutable `carrier_events` and mutable
-`carrier_deliveries`. Application or SQLx migration bookkeeping is not a
-Carrier domain table. Both tables are created once per application database and
-shared by all producers.
+Dovecote owns exactly two domain tables: immutable `dovecote_events` and mutable
+`dovecote_deliveries`. Application or SQLx migration bookkeeping is not a
+Dovecote domain table. The PostgreSQL adapter also installs one
+`dovecote_schema` bookkeeping table containing the durable schema version and
+minimum-crate compatibility marker; it is not part of the event or delivery
+domain. Both domain tables are created once per application database and shared
+by all producers.
 
 Applications execute adapter migrations under their own migration process.
-Carrier exposes migration artifacts and schema inspection but never migrates at
+Dovecote exposes migration artifacts and schema inspection but never migrates at
 library initialization or application startup. Published migration files are
 immutable. Durable schema versions evolve independently of crate semver.
 
@@ -283,21 +284,21 @@ The common accepted instant range is
 `1970-01-01T00:00:00Z..=9999-12-31T23:59:59.999999Z`. All stored and returned
 instants use UTC and microsecond representation. An occurrence time supplied by
 a caller must fall in that range and be exactly representable at microsecond
-precision; Carrier rejects, rather than rounds or truncates, a value with
+precision; Dovecote rejects, rather than rounds or truncates, a value with
 non-zero sub-microsecond precision.
 
 Storage precision is not clock resolution. PostgreSQL and configured MySQL or
 MariaDB clocks provide microsecond-capable values. SQLite's built-in current-time
 source has millisecond resolution: its database operation time is stored in the
-microsecond representation with the final three fractional digits zero. Carrier
+microsecond representation with the final three fractional digits zero. Dovecote
 does not synthesize finer SQLite clock readings from the worker clock.
 Applications must configure MySQL and MariaDB sessions to UTC; adapters verify
 that condition and use a temporal type/arithmetic path covering the common
 range rather than accepting server-local civil timestamps.
 
-### 5.2 `carrier_events`
+### 5.2 `dovecote_events`
 
-`carrier_events` is insert-only after creation. Carrier supplies no update API,
+`dovecote_events` is insert-only after creation. Dovecote supplies no update API,
 trigger, or lifecycle mutation for it.
 
 | Column | Logical type | Rule |
@@ -331,7 +332,7 @@ Lengths and full CloudEvents syntax are checked by constructors before SQL.
 In addition to the individual bounds, the UTF-8 byte lengths of `source` and
 `event_id` together MUST NOT exceed 2,048 bytes. This portable identity-key
 ceiling leaves index-tuple overhead below the smallest full B-tree entry limit
-in the tested backend matrix; it is a Carrier profile limit, not a CloudEvents
+in the tested backend matrix; it is a Dovecote profile limit, not a CloudEvents
 limit. Adapters repeat the individual and combined byte constraints in the
 database. Identity comparison is bytewise over the validated UTF-8 `source` and
 `event_id`, with equivalent binary collations on every backend. Backend DDL
@@ -345,15 +346,15 @@ The row ID is an inspection cursor, not event identity. Sequence allocation
 may leave gaps after rollback and does not express commit order across
 transactions.
 
-### 5.3 `carrier_deliveries`
+### 5.3 `dovecote_deliveries`
 
 There is exactly one delivery row for every event row. It is inserted in the
 same statement sequence and caller transaction as its event. The foreign key is
-`ON DELETE RESTRICT`; Carrier exposes no deletion operation.
+`ON DELETE RESTRICT`; Dovecote exposes no deletion operation.
 
 | Column | Logical type | Rule |
 |---|---|---|
-| `event_row_id` | signed 64-bit | Primary key and foreign key to `carrier_events(row_id)`. |
+| `event_row_id` | signed 64-bit | Primary key and foreign key to `dovecote_events(row_id)`. |
 | `state` | enum | Exactly `pending`, `claimed`, `delivered`, or `quarantined`. |
 | `available_at` | instant | Required; initial value is database enqueue time. |
 | `attempts` | non-negative signed 64-bit | Starts at zero; checked increment on each successful claim or reclaim. |
@@ -380,13 +381,13 @@ Database checks make `state` the only state model:
 | `quarantined` | `quarantined_at`, quarantine reason | claim token, worker, claim expiry, `delivered_at` |
 
 `available_at`, `attempts`, and optional last-failure fields remain populated in
-all states. Terminal states are immutable through Carrier operations. Nullable
+all states. Terminal states are immutable through Dovecote operations. Nullable
 timestamps do not create a second implicit lifecycle.
 
 `last_failure_code` and `last_failure_detail` are either both null or both
 present; the database enforces that pairing. Enqueue obtains one database time
-value and uses it for both `carrier_events.enqueued_at` and the initial
-`carrier_deliveries.available_at`.
+value and uses it for both `dovecote_events.enqueued_at` and the initial
+`dovecote_deliveries.available_at`.
 
 ### 5.4 Idempotent enqueue
 
@@ -403,7 +404,7 @@ data bytes. Database-generated `row_id` and `enqueued_at` are excluded.
   `IdempotencyConflict { existing_row_id }` and makes no change.
 
 URI references, schema URIs, media types, IDs, and event types retain their
-exact validated UTF-8 spelling; Carrier does not invent semantic URI or media-
+exact validated UTF-8 spelling; Dovecote does not invent semantic URI or media-
 type normalization. Instants use the canonical UTC representation defined in
 this specification, and extensions use their canonical tagged representation.
 JSON payload bytes are **not** canonicalized: whitespace, object member order,
@@ -420,18 +421,18 @@ owns commit and rollback.
 
 ### 5.5 Tenant boundary
 
-Durable schema version 1 has no `tenant_id` and Carrier does not implement row-
+Durable schema version 1 has no `tenant_id` and Dovecote does not implement row-
 level tenant authorization. `stream`, `source`, `subject`, and extension values
 are not security boundaries. An application needing database-enforced tenant
 isolation uses separate databases or schemas and separately authorized pools;
-it applies Carrier migrations once in each boundary and never gives a tenant
-direct access to shared Carrier tables.
+it applies Dovecote migrations once in each boundary and never gives a tenant
+direct access to shared Dovecote tables.
 
 An application may use one shared schema only when its own trusted producer and
 worker tier is explicitly authorized to process all rows in that schema and
 tenant-sensitive material stays out of operational context. If a real consumer
 needs tenant-scoped claim, page, retention, or database authorization within one
-table set, Carrier must add a first-class tenant key and matching indexes in a
+table set, Dovecote must add a first-class tenant key and matching indexes in a
 new durable schema design before that deployment. Filtering by stream in
 application code is not an acceptable substitute.
 
@@ -442,6 +443,11 @@ backend's pool, connection, and transaction types:
 
 ```text
 enqueue(caller_transaction, NewEvent) -> Result<EnqueueOutcome, EnqueueError>
+import_for_migration(caller_transaction, NewEvent, ImportedDeliveryState)
+    -> Result<ImportOutcome, ImportError>
+finalize_pending_delivery_for_migration(
+    caller_transaction, row_id, delivered_at,
+) -> Result<FinalizeOutcome, FinalizeError>
 claim(worker, lease_for, limit) -> Result<Vec<ClaimedEvent>, ClaimError>
 renew(row_id, claim_token, lease_for) -> Result<(), MutationError>
 ack(row_id, claim_token) -> Result<(), MutationError>
@@ -472,6 +478,21 @@ pub enum EnqueueOutcome {
     AlreadyEnqueued { row_id: RowId },
 }
 
+pub enum ImportedDeliveryState {
+    Pending,
+    Delivered { delivered_at: OffsetDateTime },
+}
+
+pub enum ImportOutcome {
+    Imported { row_id: RowId },
+    AlreadyImported { row_id: RowId },
+}
+
+pub enum FinalizeOutcome {
+    Finalized { row_id: RowId },
+    AlreadyFinalized { row_id: RowId },
+}
+
 pub struct ClaimedEvent {
     pub row_id: RowId,
     pub event: StoredEvent,
@@ -500,6 +521,14 @@ all bounded string types validate before an adapter begins SQL.
 
 `IdempotencyConflict` is an error, not an `EnqueueOutcome`, because callers must
 not mistake different content for successful replay.
+
+`IdentityConflict` and `ImportConflict` are importer errors. The former means
+that the complete immutable event content changed under an existing identity;
+the latter means that the delivery state changed or is no longer in the
+canonical zero-attempt imported shape. `StateConflict` is the corresponding
+typed migration-finalization error when a pending delivery is no longer in
+that shape, has already been delivered with a different timestamp, or has
+otherwise acquired delivery authority outside the finalizer.
 
 ### 6.1 Input bounds
 
@@ -540,7 +569,7 @@ distinct.
 Token generation is fallible. Adapters generate every token for the selected
 batch before updating any delivery row. If operating-system randomness fails,
 the claim transaction rolls back without changing attempts, state, tokens, or
-expiry and returns `EntropyUnavailable`. Carrier never substitutes timestamps,
+expiry and returns `EntropyUnavailable`. Dovecote never substitutes timestamps,
 row IDs, deterministic pseudorandomness, or a zero token.
 
 Ascending selection makes behaviour inspectable but is not a FIFO promise:
@@ -550,7 +579,7 @@ claimed until expiry; it never implies delivery.
 
 If the next selected row's attempt counter cannot be incremented, the claim
 transaction changes no rows and returns `CounterOverflow { row_id }`. Operators
-must inspect and repair or migrate this invariant breach; Carrier never wraps
+must inspect and repair or migrate this invariant breach; Dovecote never wraps
 the counter or silently delivers the row.
 
 ### 6.3 Fenced lifecycle mutations
@@ -608,6 +637,11 @@ current delivery state where `row_id > after_row_id`, ordered strictly by
 ascending `row_id`. `None` starts before the first row. The next cursor is the
 last returned row ID. Empty pages do not advance the cursor.
 
+The join includes every event row. A missing delivery row is durable
+inconsistency and MUST be surfaced as a typed serialization or migration error;
+it MUST NOT disappear from live or snapshot paging. Claims scan delivery rows
+for their hot path; reconciliation uses paging to discover orphan events.
+
 Paging is for inspection, export, and reconciliation. It does not claim rows,
 hide delivered or quarantined events, lock delivery rows, or promise a snapshot
 across separate live `page` calls. Because databases may allocate row IDs before
@@ -629,8 +663,13 @@ completion, cancellation, or drop.
 Snapshot paging is deliberately finite because a long read transaction delays
 vacuum or history cleanup. Documentation requires a page/time budget and shows
 how to restart an abandoned export from a new snapshot with application-level
-reconciliation. Live `page` remains suitable for inspection where concurrent
-commit inversion and later reconciliation are acceptable.
+reconciliation. SQLite deployments MUST set a bounded page/time budget because
+its retained read snapshot can delay vacuum or cleanup. On abandonment, the
+application explicitly closes or rolls back the pager and restarts from a new
+snapshot according to its reconciliation or checkpoint policy; it MUST NOT
+resume from an old pager cursor as if that cursor were a durable checkpoint.
+Live `page` remains suitable for inspection where concurrent commit inversion
+and later reconciliation are acceptable.
 
 ## 7. Errors and outcomes
 
@@ -643,6 +682,10 @@ diagnostic text and are never parsed to recover a category.
 | `InvalidLimit` | Claim/page limit is outside the public range. | Correct configuration or input. |
 | `InvalidDuration` | Lease, delay, or backoff is zero where forbidden, too large, or cannot be represented. | Correct configuration or input. |
 | `IdempotencyConflict` | `source + id` already names different immutable content. | Treat as a producer identity defect; do not retry unchanged. |
+| `IdentityConflict` | Migration import found different immutable content under an existing identity. | Stop the migration and reconcile the legacy/export ledger. |
+| `ImportConflict` | Migration import found a changed, claimed, retried, or otherwise non-canonical delivery state. | Stop the migration and reconcile state ownership. |
+| `StateConflict` | Migration finalization found a pending delivery that is claimed, retried, quarantined, delayed, already delivered with a different timestamp, or otherwise not canonical. | Stop the migration acknowledgement and reconcile state ownership. |
+| `InvalidState` | The supplied imported delivery state or authoritative timestamp is invalid. | Correct the exporter state and retry the bounded migration step. |
 | `LostClaim` | A claimed row's token is wrong, expired, or superseded. | Stop work and do not report success. |
 | `NotFound` | No such event row exists. | Correct the row reference or reconcile retention/manual changes. |
 | `IllegalTransition` | The requested operation cannot legally follow the stored non-claimed state. | Stop the stale/repeated action; investigate only if the caller did not expect that state. |
@@ -661,12 +704,12 @@ adapter subcategories where callers need retry policy.
 
 `Failure` contains a stable code and redacted detail with the bounds in the
 delivery schema. `QuarantineReason` is separately typed because quarantine is a
-terminal operator or transport-policy decision. Carrier validates bounds; it
+terminal operator or transport-policy decision. Dovecote validates bounds; it
 cannot prove that caller prose was correctly redacted.
 
 ## 8. Backend requirements
 
-Carrier never retries a PostgreSQL, MySQL, or MariaDB deadlock, serialization
+Dovecote never retries a PostgreSQL, MySQL, or MariaDB deadlock, serialization
 failure, statement timeout, or lock timeout internally in version 1. The adapter
 returns a typed transient SQL category after the whole short transaction has
 rolled back; callers may retry the complete operation under their own bounded
@@ -698,7 +741,7 @@ narrower legacy `TIMESTAMP` range, binary claim tokens, full-value unique
 identity indexes, enforced check constraints on supported releases, and short
 locking transactions using verified `SKIP LOCKED` behaviour.
 
-Each Carrier release publishes results for all of:
+Each Dovecote release publishes results for all of:
 
 - MySQL 8.4 LTS;
 - the current MySQL Innovation series at release time; and
@@ -733,14 +776,14 @@ condition; it may not be silently replaced by an older green image.
 
 ## 9. CloudEvents projections
 
-Carrier's projections implement CloudEvents 1.0 semantics without exposing the
+Dovecote's projections implement CloudEvents 1.0 semantics without exposing the
 CloudEvents SDK. Wire `specversion` remains `1.0`; conformance fixtures are
 pinned to the current stable CloudEvents 1.0.2 core, JSON-format, and binding
 artifacts by repository tag or commit rather than following a moving `main`
 branch silently. Updating that fixture pin requires a compatibility review.
 Projection methods are pure and deterministic.
 
-Carrier canonical timestamps are UTC RFC 3339: `Z` is used for UTC; the
+Dovecote canonical timestamps are UTC RFC 3339: `Z` is used for UTC; the
 fraction is omitted when zero and otherwise uses the shortest decimal fraction
 that preserves the stored instant. Extensions are ordered lexicographically.
 Structured JSON uses a fixed member order: `specversion`, `id`, `source`,
@@ -757,7 +800,7 @@ compact UTF-8 JSON object.
 - Core and extension attributes become top-level members.
 - `partitionkey` is a top-level extension member when present.
 - `EventData::Json` becomes a top-level `data` member containing the parsed JSON
-  value, never a quoted JSON document. Carrier parses and deterministically
+  value, never a quoted JSON document. Dovecote parses and deterministically
   serializes that value; the projected value is semantically equal to the
   stored JSON but need not preserve its whitespace, object-member order, or
   number spelling.
@@ -772,14 +815,14 @@ compact UTF-8 JSON object.
 The protocol-neutral binary projection contains:
 
 - raw data bytes as the body, with absent and present-empty represented
-  distinctly in the Carrier type;
+  distinctly in the Dovecote type;
 - `datacontenttype` as the transport content type when present; and
 - every other core and extension attribute as an ordered context map using the
   CloudEvents canonical string encoding.
 
 The context map includes `specversion`, `id`, `source`, `type`, optional
 `subject`, `time`, `dataschema`, `partitionkey`, and all other extensions.
-Carrier does not accept or emit arbitrary transport headers in this map.
+Dovecote does not accept or emit arbitrary transport headers in this map.
 Protocol integrations add the binding-specific prefix and own authentication,
 authorization, tracing-hop headers, and broker configuration.
 
@@ -801,21 +844,92 @@ against the CloudEvents 1.0 JSON schema or an independent conforming
 implementation. Durable tagged-extension encode/decode round trips preserve
 every extension's abstract type and value. Binary projection preserves exact
 stored data bytes, including JSON bytes. Structured JSON projection preserves
-the semantic JSON value and has byte-for-byte deterministic Carrier output; it
+the semantic JSON value and has byte-for-byte deterministic Dovecote output; it
 does not claim to reproduce the producer's original JSON spelling after a
 generic CloudEvents parser has materialized that value.
 
 CloudEvents structured JSON maps `String`, `Binary`, `URI`, `URI-reference`, and
 `Timestamp` extension values to JSON strings. A generic parser therefore cannot
-recover an unknown extension's abstract type from structured JSON alone.
-Carrier version 1 provides outbound projections, not a generic CloudEvent import
-API. Any future importer must require a caller-supplied extension-type registry
-for unknown string-mapped attributes or retain them as explicitly untyped input;
-it must not guess from string contents.
+recover an unknown extension's abstract type from structured JSON alone. The
+bounded Dovecote migration importer does not parse CloudEvents or infer
+extension types: it accepts an already validated `NewEvent` produced by the
+application's legacy exporter.
 
-### 9.4 Trace context
+### 9.4 Migration importer
 
-Carrier recognizes `traceparent` and `tracestate` as ordinary validated String
+Each SQLx adapter exposes `import_for_migration` as a concrete, caller-owned
+transaction operation. It is distinct from `enqueue` and is intended only for
+the finite legacy-outbox cutover. The caller supplies one of
+`ImportedDeliveryState::Pending` or
+`ImportedDeliveryState::Delivered { delivered_at }`; the importer accepts no
+legacy claim, retry, or quarantine state. The migration caller must resolve or
+explicitly fence an active legacy claim before mapping that source row to
+pending. Pending availability and the event's `enqueued_at` use one
+database-authoritative operation timestamp, and an exact replay requires the
+stored backend representations of those timestamps to be equal as well.
+Delivered timestamps are authoritative source values and MUST be in the common
+UTC range at exact microsecond precision; adapters preserve that precision.
+
+The operation validates the installed schema before its first mutation and
+inserts the immutable event and delivery row in the caller transaction. A
+replay returns the typed `ImportOutcome::AlreadyImported` only when the
+complete immutable event content matches and the existing delivery has the
+canonical imported shape: zero attempts, no claim, failure, or quarantine
+fields, and either pending state or the same delivered timestamp. A changed
+event returns `IdentityConflict`; a changed or non-canonical delivery returns
+the distinct `ImportConflict`. The importer never commits or rolls back the
+caller-owned transaction: after any typed error, the caller MUST roll it back
+before retrying or committing the surrounding application work. This differs
+from adapter-owned lifecycle operations, which own their short transaction and
+roll it back internally on failure. The caller commits or rolls back the
+complete application/import transaction.
+
+### 9.5 Migration delivery finalization
+
+Each SQLx adapter also exposes the concrete, migration-only operation
+`finalize_pending_delivery_for_migration(caller_transaction, row_id,
+delivered_at)`. It is used when a legacy publisher has delivered a row that
+was dual-written as a pending Dovecote delivery. It is not an ordinary
+acknowledgement shortcut and is not used by the maintained 2.0 writer path.
+The caller supplies the Dovecote `RowId` returned by the bridge mapping and
+the legacy publisher's authoritative delivery occurrence time. The caller
+owns commit or rollback; after any error it MUST roll back the surrounding
+transaction before retrying.
+
+The adapter validates the timestamp against Dovecote's common UTC range and
+microsecond precision, checks the installed schema before mutation, and locks
+the event and delivery before inspecting them. It permits exactly this
+delivery shape:
+
+```text
+state = pending
+attempts = 0
+claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL
+last_failure_code = NULL, last_failure_detail = NULL
+delivered_at = NULL, quarantined_at = NULL, quarantine_reason = NULL
+available_at = enqueued_at
+```
+
+The transition sets `state = delivered` and the supplied authoritative
+`delivered_at`, clearing no unrelated fields because the canonical predicate
+already requires them to be empty. A successful first transition returns
+`FinalizeOutcome::Finalized`; an exact rerun with the same timestamp returns
+`AlreadyFinalized`. A changed timestamp, active or expired claim, retry,
+failure, quarantine, delayed availability, missing delivery row, or any other
+non-canonical state returns a typed conflict or migration mismatch. A row
+finalized this way is terminal and is never eligible for a Dovecote claim.
+
+PostgreSQL preserves the value with `timestamptz` microsecond semantics;
+MySQL and MariaDB use UTC `DATETIME(6)`; SQLite stores canonical RFC3339 text
+and its database-generated operation clock is millisecond-resolution. The
+authoritative supplied timestamp remains at validated microsecond precision on
+all three adapters. Adapter errors retain backend SQL and transient
+categories, and SQLite requires a caller-owned write transaction (normally
+`BEGIN IMMEDIATE`).
+
+### 9.6 Trace context
+
+Dovecote recognizes `traceparent` and `tracestate` as ordinary validated String
 extensions following the W3C Trace Context grammar. `tracestate` is rejected
 without `traceparent`. Trace propagation is opt-in per producer and destination.
 The CloudEvents tracing extension does not replace protocol-specific tracing
@@ -824,13 +938,13 @@ headers; a single-hop integration that emits both keeps them consistent.
 Trace IDs can correlate activity across systems and may widen visibility.
 Applications document retention and access, must not put user or case
 identifiers into trace state, and may omit trace context at a privacy boundary.
-Carrier never synthesizes trace context.
+Dovecote never synthesizes trace context.
 
 ## 10. Integration mappings
 
 ### 10.1 HTTP
 
-For structured HTTP, the body is Carrier's structured JSON and `Content-Type`
+For structured HTTP, the body is Dovecote's structured JSON and `Content-Type`
 is `application/cloudevents+json`. For binary HTTP, the body is the exact event
 data, `Content-Type` is `datacontenttype` when present, and every other context
 attribute becomes a `ce-<name>` header. Binary HTTP MUST NOT also emit
@@ -850,7 +964,7 @@ not acknowledged until the integration's explicit policy accepts it.
 
 ### 10.2 Kafka
 
-Structured mode places Carrier's JSON projection in the record value and sets
+Structured mode places Dovecote's JSON projection in the record value and sets
 the record content-type header to `application/cloudevents+json`. Binary mode
 places exact event data in the record value, maps the content type, and maps
 context attributes to `ce_<name>` UTF-8 headers as required by the CloudEvents
@@ -858,7 +972,7 @@ Kafka binding.
 
 In binary mode, absent event data maps to a null Kafka record value. On a
 log-compacted topic that is a tombstone, not merely an event with no payload.
-Carrier's Kafka integration rejects this combination by default. An application
+Dovecote's Kafka integration rejects this combination by default. An application
 either uses structured mode, whose envelope is a non-null value even without
 data, or explicitly enables `allow_compaction_tombstone` for a destination where
 deletion is the intended meaning. Present empty binary data maps to a non-null
@@ -866,10 +980,10 @@ zero-length value and is not treated as absent.
 
 When `partitionkey` is present, the opt-in key mapper uses its UTF-8 bytes as
 the Kafka record key and leaves the extension in the CloudEvent. When absent,
-Carrier supplies no key. Topic selection comes from an application-owned map
+Dovecote supplies no key. Topic selection comes from an application-owned map
 from `stream` to topic; a stream is not blindly treated as a deployment topic.
 Kafka key partitioning can improve per-key broker order but does not turn
-Carrier's claim lifecycle into FIFO.
+Dovecote's claim lifecycle into FIFO.
 
 ### 10.3 NATS JetStream
 
@@ -877,7 +991,7 @@ The integration maps every binary context attribute, including
 `datacontenttype`, to `ce-<name>` NATS headers; unlike HTTP, binary NATS uses
 `ce-datacontenttype`, not `Content-Type`. NATS header values use the same
 single-pass CloudEvents percent-encoding rules stated for HTTP. Structured mode
-sends Carrier's structured JSON according to the CloudEvents NATS binding. The
+sends Dovecote's structured JSON according to the CloudEvents NATS binding. The
 integration maps `stream` through application destination configuration and MAY
 use `partitionkey` as subject or consumer routing input without removing it from
 the event.
@@ -892,7 +1006,7 @@ JetStream duplicate window; duplicates outside it remain possible.
 ### 10.4 Azure Event Grid
 
 An Event Grid integration configures CloudEvents 1.0 as the input schema and
-uses Carrier's structured JSON projection through Event Grid's documented HTTP
+uses Dovecote's structured JSON projection through Event Grid's documented HTTP
 publishing envelope. `id`, `source`, `type`, `subject`, occurrence `time`,
 `datacontenttype`, `dataschema`, extensions, and data retain their CloudEvents
 meanings. `stream` selects the configured Event Grid topic or domain route and
@@ -900,21 +1014,21 @@ is not added to the CloudEvent unless the application deliberately defines a
 separate valid extension.
 
 The integration owns Azure authentication, endpoint/batch framing, response
-classification, and service limits. Carrier does not pretend that an accepted
+classification, and service limits. Dovecote does not pretend that an accepted
 publish is an exactly-once consumer effect.
 
 ### 10.5 Debezium Outbox Event Router
 
-Debezium watches only `carrier_events`. All Carrier worker operations update
-only `carrier_deliveries`, so they produce no change event for the watched
-table. Enqueue produces exactly one insert into `carrier_events`; the associated
+Debezium watches only `dovecote_events`. All Dovecote worker operations update
+only `dovecote_deliveries`, so they produce no change event for the watched
+table. Enqueue produces exactly one insert into `dovecote_events`; the associated
 delivery insert is outside the connector include list.
 
 The connector include list or SMT predicate MUST select only
-`carrier_events`. Configure the stable Outbox Event Router fields as follows
+`dovecote_events`. Configure the stable Outbox Event Router fields as follows
 (property names are Debezium's):
 
-| Debezium property or output | Carrier field | Meaning |
+| Debezium property or output | Dovecote field | Meaning |
 |---|---|---|
 | `table.field.event.id` | `event_id` | Debezium `id` header; CloudEvents event ID after the downstream binding maps it to `ce_id`. Consumers pair it with `source`. |
 | `table.field.event.type` | `event_type` | Debezium `type` header; CloudEvents type after the downstream binding maps it to `ce_type`. |
@@ -930,10 +1044,10 @@ The connector include list or SMT predicate MUST select only
 | additional header `content-type` | `datacontenttype` | Optional data media type. |
 | additional header `ce_dataschema` | `dataschema` | Optional schema URI. |
 | additional header `ce_partitionkey` | `partitionkey` | Preserves the extension when the field is also the key. |
-| additional envelope `carrier_extensions` | `extensions` | Tagged extension JSON for a downstream CloudEvents-aware transformer. |
-| additional envelope `carrier_data_kind` | `data_kind` | Distinguishes JSON from opaque binary projection. |
-| additional envelope `carrier_row_id` | `row_id` | Reconciliation cursor, not event identity. |
-| additional envelope `carrier_enqueued_at` | `enqueued_at` | Source logical timestamp retained for exact enqueue-time recovery when the converter preserves Debezium's microsecond value. |
+| additional envelope `dovecote_extensions` | `extensions` | Tagged extension JSON for a downstream CloudEvents-aware transformer. |
+| additional envelope `dovecote_data_kind` | `data_kind` | Distinguishes JSON from opaque binary projection. |
+| additional envelope `dovecote_row_id` | `row_id` | Reconciliation cursor, not event identity. |
+| additional envelope `dovecote_enqueued_at` | `enqueued_at` | Source logical timestamp retained for exact enqueue-time recovery when the converter preserves Debezium's microsecond value. |
 
 The reference SMT configuration contains these literal fields; connector table
 selection and the application-owned topic prefix are configured alongside it:
@@ -950,14 +1064,14 @@ transforms.outbox.table.field.event.payload=data
 transforms.outbox.table.expand.json.payload=false
 transforms.outbox.route.by.field=stream
 transforms.outbox.route.topic.replacement=outbox.event.${routedByValue}
-transforms.outbox.table.fields.additional.placement=specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:carrier_extensions,data_kind:envelope:carrier_data_kind,row_id:envelope:carrier_row_id,enqueued_at:envelope:carrier_enqueued_at
+transforms.outbox.table.fields.additional.placement=specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:dovecote_extensions,data_kind:envelope:dovecote_data_kind,row_id:envelope:dovecote_row_id,enqueued_at:envelope:dovecote_enqueued_at
 ```
 
 Kafka record timestamps have millisecond precision. When Debezium receives a
 microsecond source timestamp for `enqueued_at`, the Outbox Event Router divides
 it by 1,000 and discards the sub-millisecond remainder for the record timestamp.
-This is a deterministic truncation, not Carrier timestamp equality. A consumer
-that requires the exact enqueue instant reads `carrier_enqueued_at` from the
+This is a deterministic truncation, not Dovecote timestamp equality. A consumer
+that requires the exact enqueue instant reads `dovecote_enqueued_at` from the
 envelope using a converter configuration proven to retain the source logical
 microsecond timestamp; otherwise that deployment documents millisecond-only CDC
 precision.
@@ -971,7 +1085,7 @@ use a tested downstream transform that:
 
 - removes null optional attributes rather than stringifying them;
 - maps Debezium's `id` and `type` headers to the chosen CloudEvents binding;
-- decodes `carrier_extensions` and respects `carrier_data_kind`;
+- decodes `dovecote_extensions` and respects `dovecote_data_kind`;
 - preserves exact binary payload bytes; and
 - produces the structured or binary mapping in section 9.
 
@@ -986,33 +1100,33 @@ additional field, an enqueue time with non-zero sub-millisecond microseconds,
 the expected record-timestamp truncation, exact envelope timestamp recovery when
 advertised, and exact binary payload bytes for each advertised CDC backend.
 
-Carrier does not run Debezium, Kafka Connect, or schema-registry infrastructure.
+Dovecote does not run Debezium, Kafka Connect, or schema-registry infrastructure.
 CDC is an integration path for applications already willing to operate it, not
-a hidden dependency of ordinary Carrier use.
+a hidden dependency of ordinary Dovecote use.
 
 ### 10.6 Other standards
 
 AsyncAPI MAY describe an application's transport-facing destinations and
-CloudEvents messages. It does not describe Carrier's SQL lease protocol and is
+CloudEvents messages. It does not describe Dovecote's SQL lease protocol and is
 not required by the storage crates. An HTTP producer integration MAY accept the
 IETF `Idempotency-Key` header under its own policy, but that transport key does
 not replace or redefine durable CloudEvents `source + id` identity.
 
-Carrier does not implement CloudEvents SQL/CESQL, CNCF Serverless Workflow, a
+Dovecote does not implement CloudEvents SQL/CESQL, CNCF Serverless Workflow, a
 schema registry, or a vendor retry-header vocabulary. They solve querying,
 workflow, payload governance, or transport policy rather than this storage
 contract. Broker-specific duplicate suppression remains a useful integration
-aid and never becomes Carrier's correctness guarantee.
+aid and never becomes Dovecote's correctness guarantee.
 
 ## 11. Retention and operational recovery
 
 ### 11.1 Retention
 
-Retention, deletion, and archival are application policy. Carrier version 1
+Retention, deletion, and archival are application policy. Dovecote version 1
 provides no delete, purge, TTL, partition-management, or automatic quarantine
 job. Applications may implement later deletion only under an explicit policy
 that accounts for consumer deduplication, audit needs, CDC lag, backups, and
-foreign references. Direct deletion is outside Carrier's API and support unless
+foreign references. Direct deletion is outside Dovecote's API and support unless
 a later specification adds it.
 
 Release documentation nevertheless includes an application-owned retention
@@ -1030,11 +1144,11 @@ runbook. Before deleting anything, it must:
 7. verify counts and CDC health after each batch before database-specific
    vacuum or space reclamation.
 
-Carrier does not infer a safe cutoff or turn acknowledgement into deletion.
+Dovecote does not infer a safe cutoff or turn acknowledgement into deletion.
 
 ### 11.2 Recovery example
 
-Carrier also excludes worker supervision. Documentation must nevertheless show
+Dovecote also excludes worker supervision. Documentation must nevertheless show
 a complete recovery loop using a fake transport:
 
 1. claim a bounded batch;
@@ -1054,7 +1168,7 @@ delivery success.
 A worker integration claims no more rows than it has bounded in-flight capacity
 to send. It does not hoard leased rows in an unbounded channel. Its configured
 lease exceeds the transport timeout plus a documented scheduling margin, and it
-renews only work that is still active and whose current token it owns. Carrier's
+renews only work that is still active and whose current token it owns. Dovecote's
 maximum batch limit is a safety ceiling, not a recommended concurrency level.
 
 Graceful shutdown first stops new claims, then gives in-flight sends a bounded
@@ -1067,7 +1181,7 @@ on the same lease recovery rather than a hidden shutdown state.
 
 ### 11.4 Operational signals
 
-Carrier adds no telemetry runtime to the core crate. Adapter documentation
+Dovecote adds no telemetry runtime to the core crate. Adapter documentation
 provides bounded status queries, and integrations instrument sends using the
 OpenTelemetry messaging semantic conventions where OpenTelemetry is present.
 Production guidance requires at least:
@@ -1084,7 +1198,7 @@ Production guidance requires at least:
 Metric labels are bounded and low-cardinality. Event IDs, sources, subjects,
 partition keys, worker IDs, failure details, quarantine prose, trace baggage,
 personal data, and payloads are not metric labels. Logs apply the same privacy
-boundary. W3C Baggage is not persisted as Carrier metadata by default; an
+boundary. W3C Baggage is not persisted as Dovecote metadata by default; an
 integration may propagate it only under an explicit allowlist and privacy/
 retention policy.
 
@@ -1092,18 +1206,21 @@ retention policy.
 
 ### 12.1 Release coordination
 
-Migration support is prepared against Keepsake 1.1 and Gatekeep 1.0. Historical
-migration files in both projects remain byte-for-byte immutable. Each project
-adds new, forward-only application-consumable migrations; the shared Carrier
-schema is created once even when both libraries are present.
+Migration support consumes the Keepsake 1.1 and Gatekeep 1.0 source schemas;
+those historical migration files remain byte-for-byte immutable. The verified
+bridge releases are Keepsake 1.2.x and Gatekeep 1.1.x. Each project adds a new,
+forward-only application-consumable migration; the shared Dovecote schema is
+created once even when both libraries are present.
 
-Keepsake 2.0 and Gatekeep 2.0 remove copied outbox SQL, claim/export
-implementations, and worker lifecycle APIs from their maintained surface. Their
-historical migrations and retained legacy rows remain until application policy
-removes them; neither library keeps permanent compatibility wrappers around the
-legacy outboxes.
-Ordinary audit/domain recording remains owned by the respective library; only
-the generic delivery lifecycle moves to Carrier.
+The 1.x bridge releases are temporary dual-persistence and publication bridges:
+they write the legacy record and a pending Dovecote event/delivery in one
+caller-owned transaction, and the legacy publisher remains the owner. The 2.0 cutover makes Dovecote the sole
+maintained SQL audit/outbox shape and removes the legacy APIs. Legacy
+audit/outbox tables and rows may remain as read-only historical source material
+under application retention policy and are removed, if ever, only by a later
+application-owned cleanup. Domain state and domain audit meaning remain owned
+by the respective library; Dovecote owns the shared durable audit event and
+delivery record.
 
 ### 12.2 Legacy identity and content mapping
 
@@ -1120,43 +1237,89 @@ keepsake-outbox-<legacy decimal row id>
 gatekeep-outbox-<legacy decimal row id>
 ```
 
+When a historical audit occurrence has no legacy outbox row, its migration
+identity uses the reserved legacy-audit namespace instead:
+
+```text
+keepsake-audit-legacy-<legacy audit row id>
+gatekeep-audit-legacy-<legacy decision row id>
+```
+
+An outbox identity is authoritative whenever an outbox row exists. These
+legacy-audit identities are migration-only and are distinct from the 2.0
+project-owned audit identities; a 2.0 producer must never derive an event ID
+from a Dovecote row ID or an absent legacy outbox row.
+
 The source plus this ID is stable across retries and resumptions. Migration
 maps:
 
-| Legacy field | Carrier field |
+| Legacy field | Dovecote field |
 |---|---|
 | library-specific source config | `source` |
 | prefixed legacy outbox row ID | `event_id` |
 | application-configured distinct stream (`keepsake-audit` or `gatekeep-audit` by default) | `stream` |
 | legacy `event_type` | `event_type` |
-| legacy payload bytes | `data = EventData::Json` |
+| legacy outbox payload in byte-preserving TEXT storage | exact UTF-8 bytes as `data = EventData::Json` |
+| legacy outbox payload in JSONB/JSON storage | deterministic UTF-8 bytes from the documented backend JSON-value export codec as `data = EventData::Json`; compare source manifests semantically because producer spelling was not retained |
+| normalized audit columns with no legacy outbox payload | output of the owning project's named versioned migration codec; `data = EventData::Json` and provenance records the codec version; these bytes are not represented as original legacy bytes |
+| legacy outbox payload absent | reserved `*-audit-legacy-<legacy audit row id>` identity; it is not a Dovecote storage-row identity |
 | explicit `application/json` | `datacontenttype` |
-| legacy `created_at` | `occurred_at` when producer policy says it represents occurrence; otherwise omit |
+| legacy `created_at` | `occurred_at` only when producer policy establishes it as occurrence time; otherwise omit |
 | none | subject, schema URI, partition key, extensions |
 
+The resumable importer MUST checkpoint four independent source cursors and
+their four captured high-water marks: Keepsake audit rows, Keepsake outbox
+rows, Gatekeep decision-audit rows, and Gatekeep outbox rows. Project and table
+row-ID sequences are unrelated and may overlap or diverge; neither one cursor
+per project nor one cursor across projects is a safe progress key. A committed
+row advances only the cursor for the source table that selected it.
+
+The planned 2.0 producer mapping makes occurrence time explicit:
+
+| 2.0 producer value | Dovecote and CloudEvents mapping |
+|---|---|
+| Keepsake `AuditEvent.at` | Will continue to map to `occurred_at` and CloudEvents `time`. |
+| Gatekeep 2.0 explicit decision-time captured authoritatively at the audit/orchestration boundary | Will map to `occurred_at` and CloudEvents `time`. |
+| Clock access inside deterministic Gatekeep policy evaluation | Will remain absent; the evaluation will not read a clock. |
+| Database `created_at`, `recorded_at`, and `enqueued_at` | Will remain persistence times and MUST NOT substitute for occurrence time. |
+
 Although legacy columns are JSON/JSONB/text depending on backend, migration
-must preserve a defined byte representation. Before migration, the application
-exporter serializes each legacy JSON value once to UTF-8 bytes using the
-library's documented legacy export path and records its SHA-256 digest. The
-same exact bytes are inserted into Carrier. Database-side casts that silently
-reformat JSON are forbidden between digest and insert.
+must preserve a defined byte representation. For an outbox payload in
+byte-preserving TEXT storage, the application exporter reads those bytes as the
+authority, records their SHA-256 digest, and inserts the same exact UTF-8 bytes
+into Dovecote. For JSONB/JSON storage, the exporter parses the stored value and
+uses the documented deterministic backend JSON-value export codec
+(`postgres-jsonb-canonical-v1` or `mysql-json-canonical-v1`); it records and
+inserts those exported bytes, while comparing the source manifest semantically.
+Database-side casts that silently reformat JSON outside that codec are
+forbidden. When an older normalized audit row has no outbox payload, the
+owning project reconstructs its typed event through one named, versioned
+migration codec (Keepsake `keepsake.audit.json.v1` or Gatekeep
+`gatekeep-audit-json-v1`). Reconstructed output is deterministic and its
+version is recorded in migration provenance, but it MUST NOT be labelled as
+original source bytes or compared to a byte sequence that never existed.
 
 ### 12.3 State mapping
 
-Only legacy undelivered rows are copied. Their initial Carrier delivery state is
-chosen as follows:
+Every legacy audit occurrence through the recorded high-water mark is copied,
+including normalized rows without an outbox payload and delivered history. Its
+Dovecote delivery state is chosen as follows:
 
-| Legacy row | Carrier state |
+| Legacy row | Dovecote state |
 |---|---|
 | never claimed | `pending`, available at migration database time |
-| claim unexpired when workers were stopped | `pending`, available at migration database time |
-| claim expired | `pending`, available at migration database time |
-| delivered | not copied |
+| claim finished, expired, or explicitly fenced before the state snapshot | `pending`, available at migration database time |
+| delivered with authoritative `delivered_at` | `delivered`, preserving the exact timestamp |
 
-No legacy claim is trusted across cutover because it has no Carrier claim token.
-Workers are stopped or drained before the state snapshot. Delivered legacy rows
-remain in their existing tables under the application's existing retention
-policy and are removed, if ever, only by a later application-owned migration.
+No legacy claim is trusted across cutover because it has no Dovecote claim token.
+Workers are stopped or drained before the state snapshot, but stopping workers
+alone does not make an active unexpired claim importable. Such a claim must
+finish, expire, or be explicitly fenced first; only then is the row imported as
+pending at Dovecote database time. A delivered row without an authoritative,
+microsecond-representable timestamp is a migration error, not a pending row and
+not a silently skipped row. Legacy tables become read-only historical source
+material after cutover and are removed, if ever, only by a later
+application-owned migration.
 
 ### 12.4 Runbook and cutover
 
@@ -1165,27 +1328,28 @@ The published runbook is backend-specific and resumable:
 1. inventory schema versions, row counts by legacy state, configured sources,
    streams, database time zone, and current workers;
 2. back up the database and prove the documented restore check;
-3. apply Carrier's schema once and run `check_schema`;
-4. deploy code capable of reading Carrier but leave legacy producers/workers in
+3. apply Dovecote's schema once and run `check_schema`;
+4. deploy code capable of reading Dovecote but leave legacy producers/workers in
    place;
 5. enter a declared maintenance window: stop or drain legacy workers, pause both
    legacy producer write paths, wait for their in-flight transactions to finish,
    and enforce the pause at the application or database boundary so no new
    legacy outbox row can commit;
 6. while the pause is enforced, record each legacy table's maximum row ID and
-   migrate every undelivered row through that inclusive high-water mark in
-   bounded transactions, producing canonical export bytes and digests and
-   enqueueing deterministic identities;
+   migrate every row (including delivered history) through that inclusive
+   high-water mark in bounded transactions, producing canonical export bytes
+   and digests and calling `import_for_migration` with its mapped state;
 7. rerun the migration through the same high-water marks: identical identities
-   must return `AlreadyEnqueued`, while any changed payload must stop the
-   migration with `IdempotencyConflict`;
+   and canonical imported state must return `AlreadyImported`, while changed
+   immutable content must stop the migration with `IdentityConflict` and
+   changed imported state with `ImportConflict`;
 8. compare per-library and total source counts, row IDs, event types, byte
    lengths, and SHA-256 payload digests, then prove there are no legacy rows
    above either high-water mark before cutover;
-9. switch both producer write paths to Carrier while the pause remains enforced,
-   resume producers, and only then start Carrier workers;
+9. switch both producer write paths to Dovecote while the pause remains enforced,
+   resume producers, and only then start Dovecote workers;
 10. confirm both libraries coexist in the shared tables under distinct streams;
-11. monitor legacy writes, Carrier claims, lost claims, retries, quarantine,
+11. monitor legacy writes, Dovecote claims, lost claims, retries, quarantine,
     and duplicate consumer identities; and
 12. remove migration-only code after its named verification and rollback window.
 
@@ -1194,37 +1358,90 @@ after the migration snapshot and before its write path changes. Failure to
 enforce the pause aborts cutover.
 
 Rollback before producer cutover restores the backup or removes only verified
-migration-owned Carrier rows under the application's written procedure.
-Rollback after Carrier publication begins cannot pretend downstream effects did
+migration-owned Dovecote rows under the application's written procedure.
+Rollback after Dovecote publication begins cannot pretend downstream effects did
 not occur; it stops publishers, reconciles by `source + id`, and follows the
 application incident plan.
 
 If an application genuinely requires zero-downtime bridging, it first deploys a
 bounded producer version that atomically writes both the legacy row and the
-Carrier event in the same caller transaction. Both rows carry the identical
-producer-configured CloudEvents `source + id`, and the legacy publisher MUST
+Dovecote event with its pending delivery in the same caller transaction. Both
+rows carry the identical producer-configured CloudEvents `source + id`, and the
+legacy publisher MUST
 expose that identity unchanged to the downstream consumer. If the legacy path
 cannot do so, this zero-downtime bridge is unsupported; use the paused cutover.
 
-The bridge then records legacy high-water marks, migrates older undelivered
-rows, and repeatedly reconciles every legacy identity through the moving
-high-water marks. A dual-written row may be delivered by a legacy worker while
-its Carrier delivery remains pending. Carrier will publish that event again
-after cutover; this duplicate is expected and is safe only because the consumer
-deduplicates the identical `source + id`. Cutover stops legacy workers, proves a
-zero-row reconciliation delta, switches publication ownership to Carrier, and
-disables the legacy write in one named release. The bridge has a named owner,
-start and end releases, reconciliation metric, alert, rollback procedure, and
-deletion condition. It is not part of Carrier's permanent API and MUST NOT
-become indefinite dual-write compatibility.
+The bridge then records legacy high-water marks, migrates older rows including
+delivered history, and repeatedly reconciles every legacy identity through the
+moving high-water marks. A dual-written row may be delivered by a legacy worker
+while its Dovecote delivery remains pending. The bridge acknowledgement path
+records that authoritative legacy delivery by calling
+`finalize_pending_delivery_for_migration` in its caller-owned transaction; it
+must not use a Dovecote claim token or ordinary `ack` for that row. Dovecote
+will publish an unfenced pending event again after cutover; this duplicate is
+expected and is safe only because the consumer deduplicates the identical
+`source + id`. Cutover stops legacy
+workers, proves a zero-row reconciliation delta, switches publication
+ownership to Dovecote, and disables the legacy write in one named release. The
+bridge has a named owner, start and end releases, reconciliation metric, alert,
+rollback procedure, and deletion condition. It is not part of Dovecote's
+permanent API and MUST NOT become indefinite dual-write compatibility.
+
+### 12.5 MariaDB maintenance-window route for existing Keepsake deployments
+
+An existing Keepsake deployment on MariaDB MUST use a maintenance window for
+the Dovecote cutover; MariaDB can require downtime here. The deployed Keepsake
+source schema is authoritative.
+Migration tooling MUST NOT recreate it from, or replay, the immutable Keepsake
+MySQL migration files against MariaDB 11.8. Those files describe one release's
+schema creation and are not a reconstruction of an already-deployed database.
+
+The supported route is:
+
+1. stop Keepsake writers and the legacy publisher; let in-flight transactions
+   finish, then finish, expire, or explicitly fence every active legacy claim;
+2. take a database snapshot or backup of that stopped, claim-resolved source
+   and prove the restore check; if the MariaDB server is upgraded to 11.8,
+   follow the vendor-supported upgrade procedure and run `mariadb-upgrade`;
+3. install Dovecote's migration artifact and the additive final Keepsake 1.x
+   bridge migration through the application migration runner, then run
+   `dovecote_sqlx_mysql::check_schema(&pool).await`;
+4. export and import complete Keepsake history from the existing tables,
+   including delivered rows and audit rows without an outbox row, with one
+   inclusive high-water mark per source table. Use exact source bytes where
+   they exist; otherwise use the named versioned exporter codec and record its
+   provenance. Use the final 1.x bridge importer, which calls
+   `import_for_migration` in bounded caller-owned transactions after the claim
+   precondition in step 1;
+5. produce a zero-delta reconciliation covering identities, event types,
+   occurrence times, payload lengths and SHA-256 digests, delivery states, and
+   per-table counts. Prove there are no rows above the captured bounds and no
+   legacy writer or publisher committed during the window, then call the final
+   1.x bridge's `finalize_upgrade_reconciliation()` to write the only accepted
+   Keepsake 2.0 activation evidence; and
+6. run Keepsake 2.0 `upgrade_migrate()` and `activate_upgrade()`, then deploy
+   the Dovecote-only writer and its one publication owner. Keep the legacy
+   publisher stopped and retain the legacy tables and export ledger read-only
+   through the rollback and consumer-deduplication windows.
+
+The repository's MariaDB fixture provides one pinned evidence path: it creates
+the historical source tables from hash-checked published artifacts on MariaDB
+10.3.17, where the historical SQL-mode-dependent generated column was still
+admitted, cleanly stops that server, opens the same data volume on MariaDB
+11.8.6, runs `mariadb-upgrade`, and then imports the existing tables without
+applying a historical Keepsake migration on 11.8. The upgrade reports the
+inherited generated-column warning; the fixture proves the source remains
+readable for complete-history import. This evidence covers that transition
+only; it does not make arbitrary deployed schemas or neighbouring MariaDB
+releases interchangeable.
 
 ## 13. Excluded responsibilities
 
-Carrier version 1 does not own or provide:
+Dovecote version 1 does not own or provide:
 
 - retention, deletion, archival, table partitioning, or vacuum policy;
 - worker task spawning, process supervision, cancellation, or shutdown;
-- Tokio or another async runtime in `carrier`;
+- Tokio or another async runtime in `dovecote`;
 - transport clients or retry classification for Kafka, NATS, HTTP, Event Grid,
   Restate, object storage, or ledgers;
 - destination URLs, credentials, broker topics, NATS subjects, or stream-to-
@@ -1337,7 +1554,7 @@ For every advertised CDC backend, an integration fixture proves:
 - nullable optional fields and absent partition keys remain absent/null rather
   than stringified in raw SMT output, and the downstream transform removes null
   CloudEvents attributes;
-- update handling fails the fixture if anything updates `carrier_events`.
+- update handling fails the fixture if anything updates `dovecote_events`.
 
 ### 14.6 Projection tests
 
@@ -1345,7 +1562,7 @@ Golden vectors are checked byte-for-byte on the MSRV and latest stable Rust.
 An independent CloudEvents 1.0 validator or SDK parses structured output.
 Binary projections preserve all context and exact stored data bytes. Structured
 JSON tests require semantic equality for JSON data and byte-for-byte equality
-with Carrier's deterministic projected output, not the producer's original JSON
+with Dovecote's deterministic projected output, not the producer's original JSON
 spelling. HTTP and Kafka binding fixtures verify header naming, content type,
 body, and Kafka key. Kafka fixtures distinguish absent data from a present
 zero-length value and prove that binary no-data events are rejected for compacted
@@ -1361,26 +1578,31 @@ and rejection immediately above each configured limit.
 ### 14.7 Migration fixtures
 
 Fixtures begin with representative Keepsake 1.1 and Gatekeep 1.0 databases for
-every shared backend. Each contains never-claimed, currently claimed, expired,
-and delivered legacy rows, plus non-ASCII and formatting-sensitive JSON.
+every shared backend. Each contains never-claimed, currently claimed (requiring
+resolution or fencing before import), expired, and delivered legacy rows, plus
+non-ASCII and formatting-sensitive JSON.
 
 Tests verify:
 
 - historical migrations are unchanged;
-- Carrier schema creation is shared and idempotently coordinated;
-- only undelivered rows migrate;
+- Dovecote schema creation is shared and idempotently coordinated;
+- complete legacy history migrates; only claims that finished, expired, or were
+  explicitly fenced before the state snapshot become pending, and delivered
+  rows retain their authoritative delivery timestamp;
 - deterministic identities and configured sources remain stable on rerun;
 - counts, byte lengths, and SHA-256 digests match before cutover;
-- interrupted batches resume through `AlreadyEnqueued`;
-- changed content stops with `IdempotencyConflict`;
+- interrupted batches resume through `AlreadyImported`;
+- changed immutable content stops with `IdentityConflict`, and changed delivery
+  state stops with `ImportConflict`;
 - no unfenced legacy claim crosses cutover;
 - the default maintenance window rejects or blocks a concurrent legacy producer
-  write until the Carrier producer path is active;
+  write until the Dovecote producer path is active;
 - a zero-downtime bridge fixture inserts rows before and after successive
   high-water marks and proves every identity is present before legacy writes are
   disabled;
 - that bridge fixture lets a legacy worker deliver a dual-written row before
-  cutover, then proves Carrier's later duplicate carries the identical
+  cutover, finalizes its pending Dovecote row with the authoritative legacy
+  timestamp, and proves any Dovecote later duplicate carries the identical
   `source + id` and is deduplicable downstream;
 - Keepsake and Gatekeep coexist under distinct streams; and
 - delivered legacy rows remain untouched.

@@ -1,0 +1,183 @@
+[
+  {
+    "name": "json-insert",
+    "input": {
+      "table": "dovecote_events",
+      "operation": "c",
+      "row": {
+        "row_id": 41,
+        "event_id": "cdc-json",
+        "event_type": "com.example.audit",
+        "stream": "audit.v1",
+        "source": "https://example.test/source",
+        "subject": null,
+        "occurred_at": null,
+        "datacontenttype": "application/json",
+        "dataschema": null,
+        "partitionkey": null,
+        "extensions": "{\"xextra\":{\"type\":\"string\",\"value\":\"opaque\"}}",
+        "data_kind": "json",
+        "data_base64": "eyJiIjoyLCJhIjoiY2Fmw6kifQ==",
+        "enqueued_at": "2026-01-01T00:00:00.123456Z"
+      }
+    },
+    "expected": {
+      "action": "emitted",
+      "raw": {
+        "converter": "dovecote-json-envelope-base64-v1",
+        "topic": "outbox.event.audit.v1",
+        "key_base64": null,
+        "timestamp_ms": 1767225600123,
+        "headers": {
+          "ce_dataschema": null,
+          "ce_partitionkey": null,
+          "ce_source": "https://example.test/source",
+          "ce_specversion": "1.0",
+          "ce_subject": null,
+          "ce_time": null,
+          "content-type": "application/json",
+          "id": "cdc-json",
+          "type": "com.example.audit"
+        },
+        "envelope": {
+          "dovecote_data_kind": "json",
+          "dovecote_enqueued_at": "2026-01-01T00:00:00.123456Z",
+          "dovecote_extensions": "{\"xextra\":{\"type\":\"string\",\"value\":\"opaque\"}}",
+          "dovecote_row_id": "41",
+          "payload": "eyJiIjoyLCJhIjoiY2Fmw6kifQ=="
+        }
+      },
+      "downstream": {
+        "structured_json": "{\"specversion\":\"1.0\",\"id\":\"cdc-json\",\"source\":\"https://example.test/source\",\"type\":\"com.example.audit\",\"datacontenttype\":\"application/json\",\"xextra\":\"opaque\",\"data\":{\"a\":\"café\",\"b\":2}}",
+        "binary_body_base64": "eyJiIjoyLCJhIjoiY2Fmw6kifQ==",
+        "binary_datacontenttype": "application/json",
+        "binary_attributes": [["specversion", "1.0"], ["id", "cdc-json"], ["source", "https://example.test/source"], ["type", "com.example.audit"], ["xextra", "opaque"]]
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "binary-insert",
+    "input": {
+      "table": "dovecote_events",
+      "operation": "c",
+      "row": {
+        "row_id": 42,
+        "event_id": "cdc-bin",
+        "event_type": "com.example.binary",
+        "stream": "audit.v1",
+        "source": "https://example.test/source",
+        "subject": "subject",
+        "occurred_at": "2026-01-01T00:00:00.5Z",
+        "datacontenttype": "application/octet-stream",
+        "dataschema": "https://example.test/schema",
+        "partitionkey": "cdc key",
+        "extensions": "{}",
+        "data_kind": "binary",
+        "data_base64": "AAH/",
+        "enqueued_at": "2026-01-01T00:00:00.654321Z"
+      }
+    },
+    "expected": {
+      "action": "emitted",
+      "raw": {
+        "converter": "dovecote-json-envelope-base64-v1",
+        "topic": "outbox.event.audit.v1",
+        "key_base64": "Y2RjIGtleQ==",
+        "timestamp_ms": 1767225600654,
+        "headers": {
+          "ce_dataschema": "https://example.test/schema",
+          "ce_partitionkey": "cdc key",
+          "ce_source": "https://example.test/source",
+          "ce_specversion": "1.0",
+          "ce_subject": "subject",
+          "ce_time": "2026-01-01T00:00:00.5Z",
+          "content-type": "application/octet-stream",
+          "id": "cdc-bin",
+          "type": "com.example.binary"
+        },
+        "envelope": {
+          "dovecote_data_kind": "binary",
+          "dovecote_enqueued_at": "2026-01-01T00:00:00.654321Z",
+          "dovecote_extensions": "{}",
+          "dovecote_row_id": "42",
+          "payload": "AAH/"
+        }
+      },
+      "downstream": {
+        "structured_json": "{\"specversion\":\"1.0\",\"id\":\"cdc-bin\",\"source\":\"https://example.test/source\",\"type\":\"com.example.binary\",\"subject\":\"subject\",\"time\":\"2026-01-01T00:00:00.5Z\",\"datacontenttype\":\"application/octet-stream\",\"dataschema\":\"https://example.test/schema\",\"partitionkey\":\"cdc key\",\"data_base64\":\"AAH/\"}",
+        "binary_body_base64": "AAH/",
+        "binary_datacontenttype": "application/octet-stream",
+        "binary_attributes": [["specversion", "1.0"], ["id", "cdc-bin"], ["source", "https://example.test/source"], ["type", "com.example.binary"], ["subject", "subject"], ["time", "2026-01-01T00:00:00.5Z"], ["dataschema", "https://example.test/schema"], ["partitionkey", "cdc key"]]
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "no-data-insert",
+    "input": {
+      "table": "dovecote_events",
+      "operation": "c",
+      "row": {
+        "row_id": 43,
+        "event_id": "cdc-none",
+        "event_type": "com.example.empty",
+        "stream": "audit.v1",
+        "source": "https://example.test/source",
+        "subject": null,
+        "occurred_at": null,
+        "datacontenttype": null,
+        "dataschema": null,
+        "partitionkey": null,
+        "extensions": "{}",
+        "data_kind": null,
+        "data_base64": null,
+        "enqueued_at": "2026-01-01T00:00:00.999999Z"
+      }
+    },
+    "expected": {
+      "action": "emitted",
+      "raw": {
+        "converter": "dovecote-json-envelope-base64-v1",
+        "topic": "outbox.event.audit.v1",
+        "key_base64": null,
+        "timestamp_ms": 1767225600999,
+        "headers": {
+          "ce_dataschema": null,
+          "ce_partitionkey": null,
+          "ce_source": "https://example.test/source",
+          "ce_specversion": "1.0",
+          "ce_subject": null,
+          "ce_time": null,
+          "content-type": null,
+          "id": "cdc-none",
+          "type": "com.example.empty"
+        },
+        "envelope": {
+          "dovecote_data_kind": null,
+          "dovecote_enqueued_at": "2026-01-01T00:00:00.999999Z",
+          "dovecote_extensions": "{}",
+          "dovecote_row_id": "43",
+          "payload": null
+        }
+      },
+      "downstream": {
+        "structured_json": "{\"specversion\":\"1.0\",\"id\":\"cdc-none\",\"source\":\"https://example.test/source\",\"type\":\"com.example.empty\"}",
+        "binary_body_base64": null,
+        "binary_datacontenttype": null,
+        "binary_attributes": [["specversion", "1.0"], ["id", "cdc-none"], ["source", "https://example.test/source"], ["type", "com.example.empty"]]
+      },
+      "error": null
+    }
+  },
+  {
+    "name": "delivery-insert",
+    "input": {"table": "dovecote_deliveries", "operation": "c", "row": null},
+    "expected": {"action": "ignored", "raw": null, "downstream": null, "error": null}
+  },
+  {
+    "name": "event-update",
+    "input": {"table": "dovecote_events", "operation": "u", "row": null},
+    "expected": {"action": "rejected", "raw": null, "downstream": null, "error": "watched dovecote_events changed without an insert"}
+  }
+]

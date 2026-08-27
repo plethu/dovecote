@@ -1,6 +1,6 @@
 # Recovery and operational boundaries
 
-Carrier stores delivery state; it does not supervise a worker or decide what a
+Dovecote stores delivery state; it does not supervise a worker or decide what a
 transport error means. An application-owned worker should claim no more than
 its bounded in-flight capacity, use a lease longer than its transport timeout
 and scheduling margin, and stop claiming before graceful shutdown.
@@ -12,7 +12,7 @@ The recovery loop is deliberately explicit:
 3. acknowledge only an accepted send while the claim is still valid;
 4. retry a classified transient failure with a bounded backoff;
 5. quarantine a classified permanent rejection;
-6. stop mutating when Carrier reports `LostClaim`; and
+6. stop mutating when Dovecote reports `LostClaim`; and
 7. let an ambiguous send-before-ack crash expire and be reclaimed.
 
 That last case can publish a duplicate. Consumers deduplicate with the

@@ -12,14 +12,54 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  check:
+  postgres:
     strategy:
       fail-fast: false
       matrix:
         rust: ["1.94.0", "stable"]
     runs-on: ubuntu-latest
+    env:
+      DOVECOTE_POSTGRES_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DOVECOTE_POSTGRES_REQUIRED: "1"
+      DOVECOTE_MYSQL_OPTIONAL: "1"
+    services:
+      postgres:
+        image: postgres:17.11
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
+      - name: Require pinned sibling bridge revisions
+        if: matrix.rust == 'stable'
+        env:
+          KEEPSAKE_BRIDGE_REF: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          GATEKEEP_BRIDGE_REF: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+        run: |
+          [[ "${KEEPSAKE_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_KEEPSAKE_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+          [[ "${GATEKEEP_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_GATEKEEP_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+      - name: Checkout reviewed Keepsake bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/keepsake
+          ref: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          path: tests/sibling-worktrees/keepsake
+      - name: Checkout reviewed Gatekeep bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/gatekeep
+          ref: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+          path: tests/sibling-worktrees/gatekeep
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: ${{ matrix.rust }}
@@ -27,4 +67,280 @@ jobs:
       - uses: jdx/mise-action@v2
         with:
           cache: true
+      - name: Set finite PostgreSQL wait limits
+        run: >-
+          docker run --rm --network host -e PGPASSWORD=postgres postgres:17.11
+          psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
+          -c "ALTER ROLE postgres SET statement_timeout = '5s'; ALTER ROLE postgres SET lock_timeout = '5s';"
       - run: mise run check
+      - name: Run complete-history fixture (PostgreSQL 17.11)
+        if: matrix.rust == 'stable'
+        env:
+          PGPASSWORD: postgres
+          DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/dovecote_fixture
+        run: |
+          docker run --rm --network host -e PGPASSWORD=postgres postgres:17.11 \
+            psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1 \
+            -c 'CREATE DATABASE dovecote_fixture'
+          tests/complete-history-migration.sh postgres
+
+  mysql-84:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.94.0", "stable"]
+    runs-on: ubuntu-latest
+    env:
+      DOVECOTE_MYSQL_URL: mysql://root:dovecote-test@127.0.0.1:3306/dovecote_test
+      DOVECOTE_MYSQL_REQUIRED: "1"
+      DOVECOTE_POSTGRES_OPTIONAL: "1"
+    services:
+      mysql:
+        image: mysql:8.4.11
+        env:
+          MYSQL_ROOT_PASSWORD: dovecote-test
+          MYSQL_DATABASE: dovecote_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pdovecote-test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned sibling bridge revisions
+        if: matrix.rust == 'stable'
+        env:
+          KEEPSAKE_BRIDGE_REF: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          GATEKEEP_BRIDGE_REF: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+        run: |
+          [[ "${KEEPSAKE_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_KEEPSAKE_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+          [[ "${GATEKEEP_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_GATEKEEP_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+      - name: Checkout reviewed Keepsake bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/keepsake
+          ref: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          path: tests/sibling-worktrees/keepsake
+      - name: Checkout reviewed Gatekeep bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/gatekeep
+          ref: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+          path: tests/sibling-worktrees/gatekeep
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+      - name: Set MySQL 8.4 session defaults
+        run: >-
+          docker run --rm --network host mysql:8.4.11 mysql
+          -h127.0.0.1 -P3306 -uroot -pdovecote-test
+          -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
+      - run: mise run check
+      - name: Run complete-history fixture (MySQL 8.4.11)
+        if: matrix.rust == 'stable'
+        env:
+          DATABASE_URL: mysql://root:dovecote-test@127.0.0.1:3306/dovecote_fixture
+          MYSQL_ARGS: --host=127.0.0.1 --port=3306 --user=root --password=dovecote-test dovecote_fixture
+        run: |
+          docker run --rm --network host mysql:8.4.11 mysql \
+            -h127.0.0.1 -P3306 -uroot -pdovecote-test \
+            -e "CREATE DATABASE dovecote_fixture CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+          tests/complete-history-migration.sh mysql
+
+  mysql-innovation:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.94.0", "stable"]
+    runs-on: ubuntu-latest
+    env:
+      DOVECOTE_MYSQL_URL: mysql://root:dovecote-test@127.0.0.1:3306/dovecote_test
+      DOVECOTE_MYSQL_REQUIRED: "1"
+      DOVECOTE_POSTGRES_OPTIONAL: "1"
+    services:
+      mysql:
+        image: mysql:26.7.0
+        env:
+          MYSQL_ROOT_PASSWORD: dovecote-test
+          MYSQL_DATABASE: dovecote_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -pdovecote-test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned sibling bridge revisions
+        if: matrix.rust == 'stable'
+        env:
+          KEEPSAKE_BRIDGE_REF: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          GATEKEEP_BRIDGE_REF: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+        run: |
+          [[ "${KEEPSAKE_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_KEEPSAKE_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+          [[ "${GATEKEEP_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_GATEKEEP_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+      - name: Checkout reviewed Keepsake bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/keepsake
+          ref: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          path: tests/sibling-worktrees/keepsake
+      - name: Checkout reviewed Gatekeep bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/gatekeep
+          ref: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+          path: tests/sibling-worktrees/gatekeep
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+      - name: Set MySQL Innovation session defaults
+        run: >-
+          docker run --rm --network host mysql:26.7.0 mysql
+          -h127.0.0.1 -P3306 -uroot -pdovecote-test
+          -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
+      - run: mise run check
+      - name: Run complete-history fixture (MySQL Innovation 26.7.0)
+        if: matrix.rust == 'stable'
+        env:
+          DATABASE_URL: mysql://root:dovecote-test@127.0.0.1:3306/dovecote_fixture
+          MYSQL_ARGS: --host=127.0.0.1 --port=3306 --user=root --password=dovecote-test dovecote_fixture
+        run: |
+          docker run --rm --network host mysql:26.7.0 mysql \
+            -h127.0.0.1 -P3306 -uroot -pdovecote-test \
+            -e "CREATE DATABASE dovecote_fixture CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"
+          tests/complete-history-migration.sh mysql-innovation
+
+  mariadb:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.94.0", "stable"]
+    runs-on: ubuntu-latest
+    env:
+      DOVECOTE_MYSQL_URL: mysql://root:dovecote-test@127.0.0.1:3306/dovecote_test
+      DOVECOTE_MYSQL_REQUIRED: "1"
+      DOVECOTE_POSTGRES_OPTIONAL: "1"
+    services:
+      mariadb:
+        image: mariadb:11.8.6
+        env:
+          MARIADB_ROOT_PASSWORD: dovecote-test
+          MARIADB_DATABASE: dovecote_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned sibling bridge revisions
+        if: matrix.rust == 'stable'
+        env:
+          KEEPSAKE_BRIDGE_REF: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          GATEKEEP_BRIDGE_REF: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+        run: |
+          [[ "${KEEPSAKE_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_KEEPSAKE_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+          [[ "${GATEKEEP_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_GATEKEEP_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+      - name: Checkout reviewed Keepsake bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/keepsake
+          ref: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          path: tests/sibling-worktrees/keepsake
+      - name: Checkout reviewed Gatekeep bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/gatekeep
+          ref: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+          path: tests/sibling-worktrees/gatekeep
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+      - name: Set MariaDB session defaults
+        run: >-
+          docker run --rm --network host mariadb:11.8.6 mariadb
+          -h127.0.0.1 -P3306 -uroot -pdovecote-test
+          -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
+      - run: mise run check
+      - name: Run MariaDB maintenance-window fixture (10.3.17 to 11.8.6)
+        if: matrix.rust == 'stable'
+        env:
+          DOVECOTE_MARIADB_SOURCE_IMAGE: mariadb:10.3.17
+          DOVECOTE_MARIADB_SOURCE_VERSION: 10.3.17
+          DOVECOTE_MARIADB_TARGET_IMAGE: mariadb:11.8.6
+          DOVECOTE_MARIADB_TARGET_VERSION: 11.8.6
+        run: tests/run-mariadb-history-upgrade.sh
+
+  sqlite:
+    strategy:
+      fail-fast: false
+      matrix:
+        rust: ["1.94.0", "stable"]
+    runs-on: ubuntu-latest
+    env:
+      DOVECOTE_POSTGRES_OPTIONAL: "1"
+      DOVECOTE_MYSQL_OPTIONAL: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Require pinned sibling bridge revisions
+        if: matrix.rust == 'stable'
+        env:
+          KEEPSAKE_BRIDGE_REF: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          GATEKEEP_BRIDGE_REF: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+        run: |
+          [[ "${KEEPSAKE_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_KEEPSAKE_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+          [[ "${GATEKEEP_BRIDGE_REF}" =~ ^[0-9a-fA-F]{40}$ ]] || { echo 'DOVECOTE_GATEKEEP_BRIDGE_REF must be a reviewed 40-hex commit SHA' >&2; exit 1; }
+      - name: Checkout reviewed Keepsake bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/keepsake
+          ref: ${{ vars.DOVECOTE_KEEPSAKE_BRIDGE_REF }}
+          path: tests/sibling-worktrees/keepsake
+      - name: Checkout reviewed Gatekeep bridge source for migration fixture
+        if: matrix.rust == 'stable'
+        uses: actions/checkout@v4
+        with:
+          repository: plethu/gatekeep
+          ref: ${{ vars.DOVECOTE_GATEKEEP_BRIDGE_REF }}
+          path: tests/sibling-worktrees/gatekeep
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      - uses: jdx/mise-action@v2
+        with:
+          cache: true
+      - name: Record linked SQLite runtime version
+        run: >-
+          cargo test -p dovecote-sqlx-sqlite --test sqlite
+          database_identity_boundary_inserts_and_deduplicates_2048_bytes
+          -- --nocapture
+      - run: mise run check
+      - name: Run complete-history fixture (SQLite linked runtime)
+        if: matrix.rust == 'stable'
+        run: tests/complete-history-migration.sh sqlite

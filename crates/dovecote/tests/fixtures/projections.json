@@ -1,0 +1,71 @@
+[
+  {
+    "name": "full-json",
+    "durable_extensions": "{\"binary\":{\"type\":\"binary\",\"value\":\"AP8Q\"},\"boolean\":{\"type\":\"boolean\",\"value\":true},\"integer\":{\"type\":\"integer\",\"value\":-7},\"reference\":{\"type\":\"uri-reference\",\"value\":\"/schema?x=space%20value\"},\"string\":{\"type\":\"string\",\"value\":\"space \\\" % café\"},\"timestamp\":{\"type\":\"timestamp\",\"value\":\"2026-01-01T00:00:00.12Z\"},\"traceparent\":{\"type\":\"string\",\"value\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01\"},\"tracestate\":{\"type\":\"string\",\"value\":\"vendor=value\"},\"uri\":{\"type\":\"uri\",\"value\":\"https://example.test/a%20b\"},\"xextra\":{\"type\":\"string\",\"value\":\"opaque\"}}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-full\",\"source\":\"https://example.test/source\",\"type\":\"com.example.audit\",\"subject\":\"subject \\\" % café\",\"time\":\"2026-01-01T00:00:00.123456Z\",\"datacontenttype\":\"application/problem+json; charset=utf-8\",\"dataschema\":\"https://example.test/schema\",\"partitionkey\":\"partition key/% café\",\"binary\":\"AP8Q\",\"boolean\":true,\"integer\":-7,\"reference\":\"/schema?x=space%20value\",\"string\":\"space \\\" % café\",\"timestamp\":\"2026-01-01T00:00:00.12Z\",\"traceparent\":\"00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01\",\"tracestate\":\"vendor=value\",\"uri\":\"https://example.test/a%20b\",\"xextra\":\"opaque\",\"data\":{\"a\":[true,1],\"z\":\"raw café\"}}",
+    "binary": {
+      "body": "eyJ6IjoicmF3IGNhZsOpIiwiYSI6W3RydWUsMV19",
+      "datacontenttype": "application/problem+json; charset=utf-8",
+      "attributes": [["specversion", "1.0"], ["id", "evt-full"], ["source", "https://example.test/source"], ["type", "com.example.audit"], ["subject", "subject \" % café"], ["time", "2026-01-01T00:00:00.123456Z"], ["dataschema", "https://example.test/schema"], ["partitionkey", "partition key/% café"], ["binary", "AP8Q"], ["boolean", "true"], ["integer", "-7"], ["reference", "/schema?x=space%20value"], ["string", "space \" % café"], ["timestamp", "2026-01-01T00:00:00.12Z"], ["traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"], ["tracestate", "vendor=value"], ["uri", "https://example.test/a%20b"], ["xextra", "opaque"]]
+    },
+    "http": {
+      "body": "eyJ6IjoicmF3IGNhZsOpIiwiYSI6W3RydWUsMV19",
+      "headers": [["Content-Type", "application/problem+json; charset=utf-8"], ["ce-specversion", "1.0"], ["ce-id", "evt-full"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.audit"], ["ce-subject", "subject%20%22%20%25%20caf%C3%A9"], ["ce-time", "2026-01-01T00:00:00.123456Z"], ["ce-dataschema", "https://example.test/schema"], ["ce-partitionkey", "partition%20key/%25%20caf%C3%A9"], ["ce-binary", "AP8Q"], ["ce-boolean", "true"], ["ce-integer", "-7"], ["ce-reference", "/schema?x=space%2520value"], ["ce-string", "space%20%22%20%25%20caf%C3%A9"], ["ce-timestamp", "2026-01-01T00:00:00.12Z"], ["ce-traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"], ["ce-tracestate", "vendor=value"], ["ce-uri", "https://example.test/a%2520b"], ["ce-xextra", "opaque"]]
+    },
+    "kafka": {
+      "key": "cGFydGl0aW9uIGtleS8lIGNhZsOp",
+      "body": "eyJ6IjoicmF3IGNhZsOpIiwiYSI6W3RydWUsMV19",
+      "headers": [["content-type", "application/problem+json; charset=utf-8"], ["ce_specversion", "1.0"], ["ce_id", "evt-full"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.audit"], ["ce_subject", "subject \" % café"], ["ce_time", "2026-01-01T00:00:00.123456Z"], ["ce_dataschema", "https://example.test/schema"], ["ce_partitionkey", "partition key/% café"], ["ce_binary", "AP8Q"], ["ce_boolean", "true"], ["ce_integer", "-7"], ["ce_reference", "/schema?x=space%20value"], ["ce_string", "space \" % café"], ["ce_timestamp", "2026-01-01T00:00:00.12Z"], ["ce_traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"], ["ce_tracestate", "vendor=value"], ["ce_uri", "https://example.test/a%20b"], ["ce_xextra", "opaque"]]
+    },
+    "nats": {
+      "body": "eyJ6IjoicmF3IGNhZsOpIiwiYSI6W3RydWUsMV19",
+      "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-full"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.audit"], ["ce-subject", "subject%20%22%20%25%20caf%C3%A9"], ["ce-time", "2026-01-01T00:00:00.123456Z"], ["ce-dataschema", "https://example.test/schema"], ["ce-partitionkey", "partition%20key/%25%20caf%C3%A9"], ["ce-binary", "AP8Q"], ["ce-boolean", "true"], ["ce-integer", "-7"], ["ce-reference", "/schema?x=space%2520value"], ["ce-string", "space%20%22%20%25%20caf%C3%A9"], ["ce-timestamp", "2026-01-01T00:00:00.12Z"], ["ce-traceparent", "00-4bf92f3577b34da6a3ce929d0e0e4736-0123456789abcdef-01"], ["ce-tracestate", "vendor=value"], ["ce-uri", "https://example.test/a%2520b"], ["ce-xextra", "opaque"], ["ce-datacontenttype", "application/problem+json;%20charset=utf-8"]],
+      "msg_id": "9e6bd7726ce8e84334bbe153bf553ee82eb710fbee231d0ec3e5ec152502d8a8"
+    }
+  },
+  {
+    "name": "binary",
+    "durable_extensions": "{}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-binary\",\"source\":\"https://example.test/source\",\"type\":\"com.example.binary\",\"datacontenttype\":\"application/octet-stream\",\"data_base64\":\"AAECf4D/\"}",
+    "binary": {"body": "AAECf4D/", "datacontenttype": "application/octet-stream", "attributes": [["specversion", "1.0"], ["id", "evt-binary"], ["source", "https://example.test/source"], ["type", "com.example.binary"]]},
+    "http": {"body": "AAECf4D/", "headers": [["Content-Type", "application/octet-stream"], ["ce-specversion", "1.0"], ["ce-id", "evt-binary"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.binary"]]},
+    "kafka": {"key": null, "body": "AAECf4D/", "headers": [["content-type", "application/octet-stream"], ["ce_specversion", "1.0"], ["ce_id", "evt-binary"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.binary"]]},
+    "nats": {"body": "AAECf4D/", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-binary"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.binary"], ["ce-datacontenttype", "application/octet-stream"]], "msg_id": "b96f9bca3400d1e9d16707f53ea9ba32ba7983b3b9055460b3fbd14a1e5e2ce3"}
+  },
+  {
+    "name": "absent",
+    "durable_extensions": "{}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-absent\",\"source\":\"https://example.test/source\",\"type\":\"com.example.empty\"}",
+    "binary": {"body": null, "datacontenttype": null, "attributes": [["specversion", "1.0"], ["id", "evt-absent"], ["source", "https://example.test/source"], ["type", "com.example.empty"]]},
+    "http": {"body": "", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-absent"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.empty"]]},
+    "kafka": {"key": null, "body": null, "headers": [["ce_specversion", "1.0"], ["ce_id", "evt-absent"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.empty"]]},
+    "nats": {"body": "", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-absent"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.empty"]], "msg_id": "726102ccc12d069b3e39dfe2e41a0a3a1b7c5a69ce3f3a0b876cbe596b277a63"}
+  },
+  {
+    "name": "empty",
+    "durable_extensions": "{}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-empty\",\"source\":\"https://example.test/source\",\"type\":\"com.example.empty\",\"data_base64\":\"\"}",
+    "binary": {"body": "", "datacontenttype": null, "attributes": [["specversion", "1.0"], ["id", "evt-empty"], ["source", "https://example.test/source"], ["type", "com.example.empty"]]},
+    "http": {"body": "", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-empty"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.empty"]]},
+    "kafka": {"key": null, "body": "", "headers": [["ce_specversion", "1.0"], ["ce_id", "evt-empty"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.empty"]]},
+    "nats": {"body": "", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-empty"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.empty"]], "msg_id": "a14d617329a1f42ec181d697be8b91cce5281c29d6acbbb3169e28041488e20b"}
+  },
+  {
+    "name": "scalar",
+    "durable_extensions": "{}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-scalar\",\"source\":\"https://example.test/source\",\"type\":\"com.example.scalar\",\"datacontenttype\":\"application/vnd.example+json\",\"data\":42}",
+    "binary": {"body": "NDI=", "datacontenttype": "application/vnd.example+json", "attributes": [["specversion", "1.0"], ["id", "evt-scalar"], ["source", "https://example.test/source"], ["type", "com.example.scalar"]]},
+    "http": {"body": "NDI=", "headers": [["Content-Type", "application/vnd.example+json"], ["ce-specversion", "1.0"], ["ce-id", "evt-scalar"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.scalar"]]},
+    "kafka": {"key": null, "body": "NDI=", "headers": [["content-type", "application/vnd.example+json"], ["ce_specversion", "1.0"], ["ce_id", "evt-scalar"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.scalar"]]},
+    "nats": {"body": "NDI=", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-scalar"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.scalar"], ["ce-datacontenttype", "application/vnd.example+json"]], "msg_id": "fc8cb25d536df4bc7914223c69700dab6580019858c558688a2617a7ba54ed21"}
+  },
+  {
+    "name": "text",
+    "durable_extensions": "{}",
+    "structured_json": "{\"specversion\":\"1.0\",\"id\":\"evt-text\",\"source\":\"https://example.test/source\",\"type\":\"com.example.text\",\"datacontenttype\":\"text/plain; charset=utf-8\",\"data_base64\":\"aMOpbGxvLCBjYWbDqQ==\"}",
+    "binary": {"body": "aMOpbGxvLCBjYWbDqQ==", "datacontenttype": "text/plain; charset=utf-8", "attributes": [["specversion", "1.0"], ["id", "evt-text"], ["source", "https://example.test/source"], ["type", "com.example.text"]]},
+    "http": {"body": "aMOpbGxvLCBjYWbDqQ==", "headers": [["Content-Type", "text/plain; charset=utf-8"], ["ce-specversion", "1.0"], ["ce-id", "evt-text"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.text"]]},
+    "kafka": {"key": null, "body": "aMOpbGxvLCBjYWbDqQ==", "headers": [["content-type", "text/plain; charset=utf-8"], ["ce_specversion", "1.0"], ["ce_id", "evt-text"], ["ce_source", "https://example.test/source"], ["ce_type", "com.example.text"]]},
+    "nats": {"body": "aMOpbGxvLCBjYWbDqQ==", "headers": [["ce-specversion", "1.0"], ["ce-id", "evt-text"], ["ce-source", "https://example.test/source"], ["ce-type", "com.example.text"], ["ce-datacontenttype", "text/plain;%20charset=utf-8"]], "msg_id": "8116823ad5f584179424cb91acd8acae1093f9a69466072c1ab2298b33c100c2"}
+  }
+]

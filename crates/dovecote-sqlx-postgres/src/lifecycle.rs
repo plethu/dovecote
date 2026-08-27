@@ -1,0 +1,763 @@
+//! PostgreSQL claims and claim-token-fenced delivery mutations.
+//!
+//! A claim transaction only selects and updates durable state.  In particular,
+//! no transport or caller code is run while its locks are held.  The returned
+//! events are assembled before commit but are handed to the caller only after
+//! the claim transaction has committed.
+
+use crate::error::{ClaimError, MutationError};
+use dovecote::{
+    AttemptCount, ClaimToken, ClaimedEvent, Delay, DeliveryState, EventData, EventSizeLimit,
+    Failure, Lease, Limit, NewEvent, QuarantineReason, RowId, StoredEvent, WorkerId,
+};
+use sqlx::{FromRow, PgPool, Postgres, Transaction, query, query_as, query_scalar};
+use time::OffsetDateTime;
+
+/// Claims pending and expired events in ascending row-id order.
+pub async fn claim(
+    pool: &PgPool,
+    worker: WorkerId,
+    lease_for: Lease,
+    limit: Limit,
+) -> Result<Vec<ClaimedEvent>, ClaimError> {
+    let mut entropy = OsEntropy;
+    claim_with_entropy(pool, worker, lease_for, limit, &mut entropy).await
+}
+
+async fn claim_with_entropy<E: EntropySource>(
+    pool: &PgPool,
+    worker: WorkerId,
+    lease_for: Lease,
+    limit: Limit,
+    entropy: &mut E,
+) -> Result<Vec<ClaimedEvent>, ClaimError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|source| ClaimError::sql("begin claim transaction", source))?;
+    let operation_time = database_time(&mut transaction)
+        .await
+        .map_err(|source| ClaimError::sql("read claim operation time", source))?;
+    let candidates = query_as::<_, ClaimCandidate>(
+        r#"
+        SELECT d.event_row_id,
+               d.state,
+               d.attempts,
+               d.claim_token,
+               e.stream,
+               e.specversion,
+               e.event_id,
+               e.source,
+               e.event_type,
+               e.subject,
+               e.occurred_at,
+               e.datacontenttype,
+               e.dataschema,
+               e.partitionkey,
+               e.extensions,
+               e.data_kind,
+               e.data
+        FROM dovecote_deliveries AS d
+        JOIN dovecote_events AS e ON e.row_id = d.event_row_id
+        WHERE (d.state = 'pending' AND d.available_at <= $1)
+           OR (d.state = 'claimed' AND d.claim_expires_at <= $1)
+        ORDER BY d.event_row_id ASC
+        LIMIT $2
+        FOR UPDATE OF d SKIP LOCKED
+        "#,
+    )
+    .bind(operation_time)
+    .bind(i64::from(limit.get()))
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|source| ClaimError::sql("select claim candidates", source))?;
+
+    // Generate all tokens before touching a delivery row.  Thus an entropy
+    // failure rolls back an entirely unchanged batch, including attempts.
+    let mut used_tokens = Vec::with_capacity(candidates.len());
+    let mut prepared = Vec::with_capacity(candidates.len());
+    for candidate in candidates {
+        let row_id = RowId::new(candidate.event_row_id)
+            .map_err(|error| ClaimError::serialization(error.to_string()))?;
+        let attempts = candidate
+            .attempts
+            .checked_add(1)
+            .ok_or(ClaimError::CounterOverflow { row_id })?;
+        let attempts = AttemptCount::new(attempts)
+            .map_err(|error| ClaimError::serialization(error.to_string()))?;
+        let token = fresh_token(candidate.claim_token.as_deref(), &used_tokens, entropy)
+            .map_err(|source| ClaimError::EntropyUnavailable { source })?;
+        used_tokens.push(token);
+        let event = hydrate_event(&candidate).map_err(ClaimError::serialization)?;
+        prepared.push((row_id, candidate.event_row_id, event, attempts, token));
+    }
+
+    let mut claimed = Vec::with_capacity(prepared.len());
+    for (row_id, event_row_id, event, attempts, token) in prepared {
+        let expiry = query_scalar::<_, OffsetDateTime>(
+            r#"
+            UPDATE dovecote_deliveries
+            SET state = 'claimed',
+                attempts = $2,
+                claim_token = $3,
+                claimed_by = $4,
+                claim_expires_at = $5 + $6
+            WHERE event_row_id = $1
+              AND (state = 'pending' OR state = 'claimed')
+            RETURNING claim_expires_at
+            "#,
+        )
+        .bind(event_row_id)
+        .bind(attempts.get())
+        .bind(token.as_slice())
+        .bind(worker.as_str())
+        .bind(operation_time)
+        .bind(lease_for.get())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|source| ClaimError::sql("update claimed delivery", source))?
+        .ok_or_else(|| {
+            ClaimError::sql(
+                "update claimed delivery",
+                sqlx::Error::Protocol("claim candidate disappeared while locked".to_owned()),
+            )
+        })?;
+
+        let claimed_event = ClaimedEvent::new(
+            row_id,
+            event,
+            attempts,
+            ClaimToken::from_bytes(token),
+            worker.clone(),
+            expiry,
+        )
+        .map_err(|error| ClaimError::serialization(error.to_string()))?;
+        claimed.push(claimed_event);
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|source| ClaimError::sql("commit claim transaction", source))?;
+    Ok(claimed)
+}
+
+/// Renews one current, unexpired claim using PostgreSQL's current time.
+pub async fn renew(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    lease_for: Lease,
+) -> Result<(), MutationError> {
+    mutate(pool, row_id, claim_token, Mutation::Renew { lease_for }).await
+}
+
+/// Acknowledges one current, unexpired claim.
+pub async fn ack(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+) -> Result<(), MutationError> {
+    mutate(pool, row_id, claim_token, Mutation::Ack).await
+}
+
+/// Returns one current, unexpired claim to pending and records its failure.
+pub async fn retry(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    failure: &Failure,
+    backoff: Delay,
+) -> Result<(), MutationError> {
+    mutate(
+        pool,
+        row_id,
+        claim_token,
+        Mutation::Retry { failure, backoff },
+    )
+    .await
+}
+
+/// Returns one current, unexpired claim to pending after a delay.
+pub async fn release(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    delay: Delay,
+) -> Result<(), MutationError> {
+    mutate(pool, row_id, claim_token, Mutation::Release { delay }).await
+}
+
+/// Moves one current, unexpired claim to the terminal quarantined state.
+pub async fn quarantine(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    reason: &QuarantineReason,
+) -> Result<(), MutationError> {
+    mutate(pool, row_id, claim_token, Mutation::Quarantine { reason }).await
+}
+
+async fn mutate(
+    pool: &PgPool,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    mutation: Mutation<'_>,
+) -> Result<(), MutationError> {
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|source| MutationError::sql("begin mutation transaction", source))?;
+
+    // The common case is one conditional update and commit.  The statement
+    // itself materializes a target-row lock before evaluating the database
+    // clock, so a worker blocked behind a lease that expires is never allowed
+    // to mutate using an instant from before the lock wait.  Only a zero-row
+    // result needs the classification path below.
+    let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
+    if affected == 1 {
+        return transaction
+            .commit()
+            .await
+            .map_err(|source| MutationError::sql("commit mutation transaction", source));
+    }
+
+    let delivery = lock_delivery(&mut transaction, row_id).await?;
+
+    classify_delivery(&delivery, claim_token)?;
+
+    let affected = execute_mutation(&mut transaction, row_id, claim_token, mutation).await?;
+    if affected != 1 {
+        // The row remains locked.  A second lock/clock read distinguishes a
+        // lease that expired during the retry from an unexpected database-side
+        // no-op; the latter remains an actionable SQL error.
+        let latest = lock_delivery(&mut transaction, row_id).await?;
+        classify_delivery(&latest, claim_token).map_err(|error| match error {
+            MutationError::LostClaim | MutationError::IllegalTransition { .. } => error,
+            other => other,
+        })?;
+        return Err(MutationError::sql(
+            "conditional delivery mutation",
+            sqlx::Error::Protocol("locked claimed delivery did not satisfy mutation".to_owned()),
+        ));
+    }
+
+    transaction
+        .commit()
+        .await
+        .map_err(|source| MutationError::sql("commit mutation transaction", source))
+}
+
+async fn execute_mutation(
+    transaction: &mut Transaction<'_, Postgres>,
+    row_id: RowId,
+    claim_token: &ClaimToken,
+    mutation: Mutation<'_>,
+) -> Result<u64, MutationError> {
+    let token = claim_token.as_bytes().as_slice();
+    let result = match mutation {
+        Mutation::Renew { lease_for } => {
+            query(
+                r#"
+                WITH locked AS MATERIALIZED (
+                    SELECT event_row_id
+                    FROM dovecote_deliveries
+                    WHERE event_row_id = $1
+                    FOR UPDATE
+                ), operation AS MATERIALIZED (
+                    SELECT locked.event_row_id, clock_timestamp() AS operation_time
+                    FROM locked
+                )
+                UPDATE dovecote_deliveries AS delivery
+                SET claim_expires_at = operation.operation_time + $3
+                FROM operation
+                WHERE delivery.event_row_id = operation.event_row_id
+                  AND delivery.state = 'claimed'
+                  AND delivery.claim_token = $2
+                  AND delivery.claim_expires_at > operation.operation_time
+                "#,
+            )
+            .bind(row_id.get())
+            .bind(token)
+            .bind(lease_for.get())
+            .execute(&mut **transaction)
+            .await
+        }
+        Mutation::Ack => {
+            query(
+                r#"
+                WITH locked AS MATERIALIZED (
+                    SELECT event_row_id
+                    FROM dovecote_deliveries
+                    WHERE event_row_id = $1
+                    FOR UPDATE
+                ), operation AS MATERIALIZED (
+                    SELECT locked.event_row_id, clock_timestamp() AS operation_time
+                    FROM locked
+                )
+                UPDATE dovecote_deliveries AS delivery
+                SET state = 'delivered',
+                    claim_token = NULL,
+                    claimed_by = NULL,
+                    claim_expires_at = NULL,
+                    delivered_at = operation.operation_time
+                FROM operation
+                WHERE delivery.event_row_id = operation.event_row_id
+                  AND delivery.state = 'claimed'
+                  AND delivery.claim_token = $2
+                  AND delivery.claim_expires_at > operation.operation_time
+                "#,
+            )
+            .bind(row_id.get())
+            .bind(token)
+            .execute(&mut **transaction)
+            .await
+        }
+        Mutation::Retry { failure, backoff } => {
+            query(
+                r#"
+                WITH locked AS MATERIALIZED (
+                    SELECT event_row_id
+                    FROM dovecote_deliveries
+                    WHERE event_row_id = $1
+                    FOR UPDATE
+                ), operation AS MATERIALIZED (
+                    SELECT locked.event_row_id, clock_timestamp() AS operation_time
+                    FROM locked
+                )
+                UPDATE dovecote_deliveries AS delivery
+                SET state = 'pending',
+                    available_at = operation.operation_time + $3,
+                    claim_token = NULL,
+                    claimed_by = NULL,
+                    claim_expires_at = NULL,
+                    last_failure_code = $4,
+                    last_failure_detail = $5
+                FROM operation
+                WHERE delivery.event_row_id = operation.event_row_id
+                  AND delivery.state = 'claimed'
+                  AND delivery.claim_token = $2
+                  AND delivery.claim_expires_at > operation.operation_time
+                "#,
+            )
+            .bind(row_id.get())
+            .bind(token)
+            .bind(backoff.get())
+            .bind(failure.code())
+            .bind(failure.detail())
+            .execute(&mut **transaction)
+            .await
+        }
+        Mutation::Release { delay } => {
+            query(
+                r#"
+                WITH locked AS MATERIALIZED (
+                    SELECT event_row_id
+                    FROM dovecote_deliveries
+                    WHERE event_row_id = $1
+                    FOR UPDATE
+                ), operation AS MATERIALIZED (
+                    SELECT locked.event_row_id, clock_timestamp() AS operation_time
+                    FROM locked
+                )
+                UPDATE dovecote_deliveries AS delivery
+                SET state = 'pending',
+                    available_at = operation.operation_time + $3,
+                    claim_token = NULL,
+                    claimed_by = NULL,
+                    claim_expires_at = NULL
+                FROM operation
+                WHERE delivery.event_row_id = operation.event_row_id
+                  AND delivery.state = 'claimed'
+                  AND delivery.claim_token = $2
+                  AND delivery.claim_expires_at > operation.operation_time
+                "#,
+            )
+            .bind(row_id.get())
+            .bind(token)
+            .bind(delay.get())
+            .execute(&mut **transaction)
+            .await
+        }
+        Mutation::Quarantine { reason } => {
+            query(
+                r#"
+                WITH locked AS MATERIALIZED (
+                    SELECT event_row_id
+                    FROM dovecote_deliveries
+                    WHERE event_row_id = $1
+                    FOR UPDATE
+                ), operation AS MATERIALIZED (
+                    SELECT locked.event_row_id, clock_timestamp() AS operation_time
+                    FROM locked
+                )
+                UPDATE dovecote_deliveries AS delivery
+                SET state = 'quarantined',
+                    claim_token = NULL,
+                    claimed_by = NULL,
+                    claim_expires_at = NULL,
+                    quarantined_at = operation.operation_time,
+                    quarantine_reason = $3
+                FROM operation
+                WHERE delivery.event_row_id = operation.event_row_id
+                  AND delivery.state = 'claimed'
+                  AND delivery.claim_token = $2
+                  AND delivery.claim_expires_at > operation.operation_time
+                "#,
+            )
+            .bind(row_id.get())
+            .bind(token)
+            .bind(reason.as_str())
+            .execute(&mut **transaction)
+            .await
+        }
+    };
+    result
+        .map(|result| result.rows_affected())
+        .map_err(|source| MutationError::sql("execute conditional delivery mutation", source))
+}
+
+async fn lock_delivery(
+    transaction: &mut Transaction<'_, Postgres>,
+    row_id: RowId,
+) -> Result<DeliveryForMutation, MutationError> {
+    query_as::<_, DeliveryForMutation>(
+        r#"
+        WITH locked AS MATERIALIZED (
+            SELECT state, claim_token, claim_expires_at
+            FROM dovecote_deliveries
+            WHERE event_row_id = $1
+            FOR UPDATE
+        ), operation AS MATERIALIZED (
+            SELECT locked.*, clock_timestamp() AS operation_time
+            FROM locked
+        )
+        SELECT state, claim_token, claim_expires_at, operation_time
+        FROM operation
+        "#,
+    )
+    .bind(row_id.get())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|source| MutationError::sql("lock delivery for mutation", source))?
+    .ok_or(MutationError::NotFound)
+}
+
+fn classify_delivery(
+    delivery: &DeliveryForMutation,
+    claim_token: &ClaimToken,
+) -> Result<(), MutationError> {
+    let state = parse_state(&delivery.state)?;
+    if state != DeliveryState::Claimed {
+        return Err(MutationError::IllegalTransition { state });
+    }
+
+    let stored_token = delivery
+        .claim_token
+        .as_deref()
+        .ok_or_else(|| MutationError::serialization("claimed delivery has no claim token"))?;
+    if stored_token.len() != dovecote::CLAIM_TOKEN_BYTES {
+        return Err(MutationError::serialization(
+            "claimed delivery has an invalid claim token width",
+        ));
+    }
+
+    let expires_at = delivery
+        .claim_expires_at
+        .ok_or_else(|| MutationError::serialization("claimed delivery has no claim expiry"))?;
+    if stored_token != claim_token.as_bytes() || expires_at <= delivery.operation_time {
+        return Err(MutationError::LostClaim);
+    }
+
+    Ok(())
+}
+
+async fn database_time(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<OffsetDateTime, sqlx::Error> {
+    // `CURRENT_TIMESTAMP` is PostgreSQL's transaction-start timestamp.  The
+    // lifecycle contract needs the instant at which this operation reaches
+    // the database, especially after waiting for a row lock, so use the
+    // database clock that advances during a transaction.
+    query_scalar("SELECT clock_timestamp()")
+        .fetch_one(&mut **transaction)
+        .await
+}
+
+fn fresh_token(
+    previous: Option<&[u8]>,
+    used_tokens: &[[u8; dovecote::CLAIM_TOKEN_BYTES]],
+    entropy: &mut impl EntropySource,
+) -> Result<[u8; dovecote::CLAIM_TOKEN_BYTES], getrandom::Error> {
+    loop {
+        let mut token = [0_u8; dovecote::CLAIM_TOKEN_BYTES];
+        entropy.fill(&mut token)?;
+        let differs_from_previous = previous != Some(token.as_slice());
+        let unique_in_batch = used_tokens.iter().all(|used| used != &token);
+        if differs_from_previous && unique_in_batch {
+            return Ok(token);
+        }
+    }
+}
+
+trait EntropySource {
+    fn fill(&mut self, output: &mut [u8]) -> Result<(), getrandom::Error>;
+}
+
+struct OsEntropy;
+
+impl EntropySource for OsEntropy {
+    fn fill(&mut self, output: &mut [u8]) -> Result<(), getrandom::Error> {
+        getrandom::fill(output)
+    }
+}
+
+#[derive(Debug, FromRow)]
+struct ClaimCandidate {
+    event_row_id: i64,
+    state: String,
+    attempts: i64,
+    claim_token: Option<Vec<u8>>,
+    stream: String,
+    specversion: String,
+    event_id: String,
+    source: String,
+    event_type: String,
+    subject: Option<String>,
+    occurred_at: Option<OffsetDateTime>,
+    datacontenttype: Option<String>,
+    dataschema: Option<String>,
+    partitionkey: Option<String>,
+    extensions: String,
+    data_kind: Option<String>,
+    data: Option<Vec<u8>>,
+}
+
+#[derive(Debug, FromRow)]
+struct DeliveryForMutation {
+    state: String,
+    claim_token: Option<Vec<u8>>,
+    claim_expires_at: Option<OffsetDateTime>,
+    operation_time: OffsetDateTime,
+}
+
+#[derive(Clone, Copy)]
+enum Mutation<'a> {
+    Renew {
+        lease_for: Lease,
+    },
+    Ack,
+    Retry {
+        failure: &'a Failure,
+        backoff: Delay,
+    },
+    Release {
+        delay: Delay,
+    },
+    Quarantine {
+        reason: &'a QuarantineReason,
+    },
+}
+
+fn parse_state(value: &str) -> Result<DeliveryState, MutationError> {
+    match value {
+        "pending" => Ok(DeliveryState::Pending),
+        "claimed" => Ok(DeliveryState::Claimed),
+        "delivered" => Ok(DeliveryState::Delivered),
+        "quarantined" => Ok(DeliveryState::Quarantined),
+        _ => Err(MutationError::serialization(format!(
+            "unknown delivery state {value:?}"
+        ))),
+    }
+}
+
+fn hydrate_event(candidate: &ClaimCandidate) -> Result<StoredEvent, String> {
+    if candidate.state != "pending" && candidate.state != "claimed" {
+        return Err("claim candidate has an ineligible state".to_owned());
+    }
+
+    if candidate.specversion != dovecote::SPEC_VERSION {
+        return Err("stored event has an unsupported specversion".to_owned());
+    }
+
+    let stream =
+        dovecote::StreamName::new(candidate.stream.clone()).map_err(|error| error.to_string())?;
+    let id =
+        dovecote::EventId::new(candidate.event_id.clone()).map_err(|error| error.to_string())?;
+    let source =
+        dovecote::EventSource::new(candidate.source.clone()).map_err(|error| error.to_string())?;
+    let event_type = dovecote::EventType::new(candidate.event_type.clone())
+        .map_err(|error| error.to_string())?;
+    let mut builder = NewEvent::builder(stream, id, source, event_type);
+    builder = match &candidate.subject {
+        Some(value) => builder.subject(
+            dovecote::EventSubject::new(value.clone()).map_err(|error| error.to_string())?,
+        ),
+        None => builder,
+    };
+
+    builder = match candidate.occurred_at {
+        Some(value) => builder.time(value),
+        None => builder,
+    };
+
+    builder = match &candidate.datacontenttype {
+        Some(value) => builder.datacontenttype(
+            dovecote::ContentType::new(value.clone()).map_err(|error| error.to_string())?,
+        ),
+        None => builder,
+    };
+
+    builder = match &candidate.dataschema {
+        Some(value) => builder.dataschema(
+            dovecote::SchemaUri::new(value.clone()).map_err(|error| error.to_string())?,
+        ),
+        None => builder,
+    };
+
+    builder = match &candidate.partitionkey {
+        Some(value) => builder.partitionkey(
+            dovecote::PartitionKey::new(value.clone()).map_err(|error| error.to_string())?,
+        ),
+        None => builder,
+    };
+
+    builder = builder.extensions(
+        dovecote::Extensions::from_canonical_json(&candidate.extensions)
+            .map_err(|error| error.to_string())?,
+    );
+    match (&candidate.data_kind, &candidate.data) {
+        (None, None) => {}
+        (Some(kind), Some(bytes)) if kind == "json" => {
+            builder =
+                builder.data(EventData::json(bytes.clone()).map_err(|error| error.to_string())?);
+        }
+        (Some(kind), Some(bytes)) if kind == "binary" => {
+            builder = builder.data(EventData::binary(bytes.clone()));
+        }
+        _ => return Err("stored data kind and data columns do not agree".to_owned()),
+    };
+
+    builder
+        .build_with_limit(EventSizeLimit::new(usize::MAX).expect("maximum size is non-zero"))
+        .map_err(|error| error.to_string())?
+        .into_stored()
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EntropySource, OsEntropy, claim_with_entropy, fresh_token};
+    use crate::{ClaimError, MIGRATIONS, check_schema, enqueue};
+    use dovecote::{EventId, EventSource, EventType, Limit, NewEvent, StreamName, WorkerId};
+    use sqlx::{
+        postgres::{PgConnectOptions, PgPoolOptions},
+        query, query_as, raw_sql,
+    };
+    use std::{
+        error::Error,
+        str::FromStr,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    #[test]
+    fn generated_tokens_are_distinct_from_previous_and_batch_values() {
+        let mut entropy = OsEntropy;
+        let first = fresh_token(None, &[], &mut entropy).expect("OS entropy available");
+        let second =
+            fresh_token(Some(&first), &[first], &mut entropy).expect("OS entropy available");
+        assert_ne!(first, second);
+    }
+
+    struct FailsEntropy;
+
+    impl EntropySource for FailsEntropy {
+        fn fill(&mut self, _output: &mut [u8]) -> Result<(), getrandom::Error> {
+            Err(getrandom::Error::new_custom(1))
+        }
+    }
+
+    fn entropy_event(id: &str) -> NewEvent {
+        NewEvent::new(
+            StreamName::new("audit").expect("valid stream"),
+            EventId::new(id).expect("valid id"),
+            EventSource::new("https://example.test/source").expect("valid source"),
+            EventType::new("com.example.entropy").expect("valid event type"),
+        )
+        .expect("valid event")
+    }
+
+    #[test]
+    fn entropy_failure_is_returned_before_a_token_is_accepted() {
+        let mut entropy = FailsEntropy;
+        let error = fresh_token(None, &[], &mut entropy).expect_err("injected failure");
+        assert_eq!(error.raw_os_error(), None);
+    }
+
+    #[tokio::test]
+    async fn injected_entropy_failure_leaves_the_claim_batch_unchanged_when_configured()
+    -> Result<(), Box<dyn Error>> {
+        let Ok(url) = std::env::var("DOVECOTE_POSTGRES_URL") else {
+            return Ok(());
+        };
+
+        let admin = PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await?;
+        let suffix = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+        let schema = format!("dovecote_entropy_test_{}_{}", std::process::id(), suffix);
+        query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA \"{schema}\"")))
+            .execute(&admin)
+            .await?;
+        let result = async {
+            let options = PgConnectOptions::from_str(&url)?.options([
+                ("search_path", format!("\"{schema}\"")),
+            ]);
+            let pool = PgPoolOptions::new()
+                .max_connections(3)
+                .connect_with(options)
+                .await?;
+            raw_sql(MIGRATIONS[0].sql()).execute(&pool).await?;
+            check_schema(&pool).await?;
+
+            let mut transaction = pool.begin().await?;
+            enqueue(&mut transaction, entropy_event("entropy-first")).await?;
+            enqueue(&mut transaction, entropy_event("entropy-second")).await?;
+            transaction.commit().await?;
+
+            let mut entropy = FailsEntropy;
+            let claim = claim_with_entropy(
+                &pool,
+                WorkerId::new("entropy-worker")?,
+                dovecote::Lease::new(std::time::Duration::from_secs(5))?,
+                Limit::new(2)?,
+                &mut entropy,
+            )
+            .await;
+            assert!(matches!(claim, Err(ClaimError::EntropyUnavailable { .. })));
+            let snapshots = query_as::<_, (String, i64, Option<Vec<u8>>, Option<time::OffsetDateTime>)>(
+                "SELECT state, attempts, claim_token, claim_expires_at FROM dovecote_deliveries ORDER BY event_row_id",
+            )
+            .fetch_all(&pool)
+            .await?;
+            assert_eq!(snapshots.len(), 2);
+            assert!(snapshots
+                .iter()
+                .all(|(state, attempts, token, expiry)| state == "pending"
+                    && *attempts == 0
+                    && token.is_none()
+                    && expiry.is_none()));
+            pool.close().await;
+            Ok::<_, Box<dyn Error>>(())
+        }
+        .await;
+        query(sqlx::AssertSqlSafe(format!(
+            "DROP SCHEMA \"{schema}\" CASCADE"
+        )))
+        .execute(&admin)
+        .await?;
+        admin.close().await;
+        result
+    }
+}
