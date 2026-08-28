@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.0] - 2026-08-28
 
 ### Core
 
@@ -17,8 +17,7 @@
   durable identity is tenant-scoped as `(tenant_id, source, id)` while the
   projected CloudEvents identity remains `(source, id)`.
 - Added clean tenant-aware baselines and explicit v1 prepare/backfill/activate
-  paths for PostgreSQL, MySQL/MariaDB, and SQLite. These 0.2.0 changes remain
-  pre-release until the exact backend evidence in the support matrix is rerun.
+  paths for PostgreSQL, MySQL/MariaDB, and SQLite.
 
 ## [0.1.1] - 2026-08-28
 
