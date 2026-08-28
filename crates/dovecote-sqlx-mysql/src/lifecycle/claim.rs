@@ -466,13 +466,27 @@ mod tests {
         Ok(true)
     }
 
+    const DROP_INSTALLED_SCHEMA_SQL: &str = "DROP TRIGGER IF EXISTS dovecote_events_row_id_positive_insert; DROP TRIGGER IF EXISTS dovecote_events_row_id_positive_update; DROP TABLE IF EXISTS dovecote_deliveries; DROP TABLE IF EXISTS dovecote_events; DROP TABLE IF EXISTS dovecote_schema";
+
+    #[test]
+    fn drop_installed_schema_cleans_the_marker_after_domain_tables() {
+        let events = DROP_INSTALLED_SCHEMA_SQL
+            .find("DROP TABLE IF EXISTS dovecote_events")
+            .expect("event table cleanup");
+        let deliveries = DROP_INSTALLED_SCHEMA_SQL
+            .find("DROP TABLE IF EXISTS dovecote_deliveries")
+            .expect("delivery table cleanup");
+        let marker = DROP_INSTALLED_SCHEMA_SQL
+            .find("DROP TABLE IF EXISTS dovecote_schema")
+            .expect("schema marker cleanup");
+        assert!(marker > events && marker > deliveries);
+    }
+
     async fn drop_installed_schema(pool: &MySqlPool) -> Result<(), sqlx::Error> {
-        raw_sql(
-            "DROP TRIGGER IF EXISTS dovecote_events_row_id_positive_insert; DROP TRIGGER IF EXISTS dovecote_events_row_id_positive_update; DROP TABLE IF EXISTS dovecote_deliveries; DROP TABLE IF EXISTS dovecote_events",
-        )
-        .execute(pool)
-        .await
-        .map(|_| ())
+        raw_sql(DROP_INSTALLED_SCHEMA_SQL)
+            .execute(pool)
+            .await
+            .map(|_| ())
     }
 
     #[allow(clippy::excessive_nesting)]
