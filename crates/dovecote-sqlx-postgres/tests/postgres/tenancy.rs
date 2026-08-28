@@ -137,6 +137,7 @@ async fn postgres_rls_live_role_boundary_is_enforced_when_configured() -> Result
         );
         return Ok(());
     };
+
     let url = url.to_str().ok_or("PostgreSQL RLS URL is not UTF-8")?;
     let admin = PgPoolOptions::new().max_connections(3).connect(url).await?;
     let is_superuser: bool =
@@ -323,9 +324,11 @@ async fn cleanup_rls_setup(admin: &sqlx::PgPool, schema: &str, role: &str) -> Re
     if let Err(error) = cleanup_schema {
         diagnostics.push(format!("drop schema: {error}"));
     }
+
     if let Err(error) = cleanup_role {
         diagnostics.push(format!("drop role: {error}"));
     }
+
     if diagnostics.is_empty() {
         Ok(())
     } else {

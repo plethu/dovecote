@@ -7,6 +7,7 @@ async fn tenant_handles_isolate_page_claim_import_finalize_and_mutation()
     let Some(pool) = live_pool().await? else {
         return Ok(());
     };
+
     install(&pool).await?;
     clear_conformance_rows(&pool).await?;
     let root = MySqlDovecote::new(pool.clone());
@@ -24,6 +25,7 @@ async fn tenant_handles_isolate_page_claim_import_finalize_and_mutation()
             other => return Err(format!("expected tenant-a insert, got {other:?}").into()),
         }
     };
+
     let row_b = {
         let mut tx = pool.begin().await?;
         let outcome = tenant_b.enqueue(&mut tx, event_b).await?;

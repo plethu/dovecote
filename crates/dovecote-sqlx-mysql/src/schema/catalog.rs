@@ -143,6 +143,7 @@ async fn check_marker_table(
             detail: "required table dovecote_schema is missing".to_owned(),
         });
     };
+
     if marker.table_type != "BASE TABLE" || marker.engine.as_deref() != Some("InnoDB") {
         return Err(SchemaError::MigrationMismatch {
             detail: "table dovecote_schema must be an InnoDB base table".to_owned(),
@@ -180,6 +181,7 @@ async fn check_marker_table(
                 detail: format!("required schema marker CHECK constraint {name} is missing"),
             });
         };
+
         if !marker_check_clause_is_plausible(name, &check.check_clause) {
             return Err(SchemaError::MigrationMismatch {
                 detail: format!("schema marker CHECK constraint {name} is incompatible"),

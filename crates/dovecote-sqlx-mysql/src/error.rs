@@ -64,6 +64,7 @@ pub(crate) fn is_tenant_source_event_id_duplicate(source: &sqlx::Error) -> bool 
     let Some(database_error) = source.as_database_error() else {
         return false;
     };
+
     let Some(mysql_error) = database_error.try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
     else {
         return false;

@@ -1,5 +1,6 @@
 [tools]
 just = "1.53.0"
+"aqua:BurntSushi/ripgrep" = "15.2.0"
 taplo = "0.10.0"
 typos = "1.47.2"
 "cargo:ast-grep" = "0.44.1"

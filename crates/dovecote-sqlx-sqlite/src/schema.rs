@@ -189,6 +189,7 @@ async fn check_schema_marker(
             markers.len()
         )));
     }
+
     let marker = &markers[0];
     let minimum = migration.compatibility().minimum();
     if marker.schema_version != i64::from(migration.version())
@@ -465,19 +466,22 @@ fn normalize_sql(value: &str) -> String {
     let mut normalized = String::with_capacity(value.len());
     let mut in_string = false;
     for character in value.chars() {
-        if character == '\'' {
-            in_string = !in_string;
-            normalized.push(character);
-        } else if character == '"' && !in_string {
-            // SQLite quotes a rebuilt table name after ALTER TABLE RENAME;
-            // identifier quoting does not change the table contract.
-            continue;
-        } else if !character.is_ascii_whitespace() {
-            if in_string {
+        match (character, in_string) {
+            ('\'', _) => {
+                in_string = !in_string;
                 normalized.push(character);
-            } else {
+            }
+            ('"', false) => {
+                // SQLite quotes a rebuilt table name after ALTER TABLE RENAME;
+                // identifier quoting does not change the table contract.
+            }
+            (character, true) if !character.is_ascii_whitespace() => {
+                normalized.push(character);
+            }
+            (character, false) if !character.is_ascii_whitespace() => {
                 normalized.extend(character.to_lowercase());
             }
+            _ => {}
         }
     }
     normalized

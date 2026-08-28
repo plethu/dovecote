@@ -62,6 +62,7 @@ pub(crate) async fn check_schema_connection(
             ),
         });
     }
+
     let marker = &markers[0];
     let migration =
         current_migration().map_err(|detail| SchemaError::MigrationMismatch { detail })?;

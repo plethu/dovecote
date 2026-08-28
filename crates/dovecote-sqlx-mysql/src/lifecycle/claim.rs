@@ -80,8 +80,9 @@ async fn claim_with_entropy_scoped<E: EntropySource>(
            OR (d.state = _binary 'claimed' AND d.claim_expires_at <= UTC_TIMESTAMP(6)))
         ORDER BY d.event_row_id ASC
         LIMIT ?
-    "#
+        "#
         };
+
         let limit_usize = usize::try_from(limit.get())
             .map_err(|_| ClaimError::serialization("claim limit does not fit usize"))?;
         let mut after_row_id = 0_i64;
@@ -92,6 +93,7 @@ async fn claim_with_entropy_scoped<E: EntropySource>(
             if let Some(tenant_id) = tenant_id {
                 candidate_ids = candidate_ids.bind(tenant_id.as_str().as_bytes());
             }
+
             let ids = candidate_ids
                 .bind(i64::from(limit.get()))
                 .fetch_all(&mut *transaction)
@@ -130,12 +132,14 @@ async fn claim_with_entropy_scoped<E: EntropySource>(
           AND ((d.state = _binary 'pending' AND d.available_at <= UTC_TIMESTAMP(6))
            OR (d.state = _binary 'claimed' AND d.claim_expires_at <= UTC_TIMESTAMP(6)))
         FOR UPDATE SKIP LOCKED
-    "#
+        "#
                 };
+
                 let mut candidate = query_as::<_, ClaimCandidate>(candidate_sql).bind(id.event_row_id);
                 if let Some(tenant_id) = tenant_id {
                     candidate = candidate.bind(tenant_id.as_str().as_bytes());
                 }
+
                 if let Some(candidate) = candidate
                     .fetch_optional(&mut *transaction)
                     .await

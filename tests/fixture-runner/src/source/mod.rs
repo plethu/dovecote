@@ -165,6 +165,7 @@ fn golden_occurrence(project: &str, source_id: u64) -> Result<GoldenOccurrence, 
             "reconstructed payload golden manifest has an unsupported schema".into(),
         ));
     }
+
     let (reference, expected_reference) = match project {
         "keepsake" => (
             &manifest.reference.keepsake,
@@ -192,6 +193,7 @@ fn golden_occurrence(project: &str, source_id: u64) -> Result<GoldenOccurrence, 
             )));
         }
     };
+
     if reference.repository.is_empty()
         || reference.commit.len() != 40
         || !reference
@@ -242,18 +244,21 @@ fn reconstructed_fixture_payload(
             "reconstructed {project}/{source_id} fixture codec version differs from golden manifest"
         )));
     }
+
     if source_row_digest != golden.source_row_sha256 {
         return Err(invalid(format!(
             "reconstructed {project}/{source_id} source digest differs from golden manifest: expected {}, got {source_row_digest}",
             golden.source_row_sha256
         )));
     }
+
     let payload = expected.payload.into_bytes();
     if sha256_hex(&payload) != golden.canonical_payload_sha256 {
         return Err(invalid(format!(
             "reconstructed {project}/{source_id} canonical payload digest differs from golden manifest"
         )));
     }
+
     let expected_codec = match project {
         "keepsake" => ("keepsake.audit.json", "v1"),
         "gatekeep" => ("gatekeep-audit-json", "v1"),
@@ -263,6 +268,7 @@ fn reconstructed_fixture_payload(
             )));
         }
     };
+
     if (golden.codec_name.as_str(), golden.codec_version.as_str()) != expected_codec {
         return Err(invalid(format!(
             "reconstructed {project}/{source_id} golden codec identity differs from project contract"
@@ -318,6 +324,7 @@ fn resolve_source(
     } else {
         expected_value == source_value
     };
+
     if !payload_matches {
         return Err(invalid(format!(
             "source payload differs from the checked-in fixture for {project}/{source_id}"
@@ -425,6 +432,7 @@ mod tests {
                 payload: original.to_owned(),
             }],
         };
+
         for export_format in ["postgres-jsonb-canonical-v1", "mysql-json-canonical-v1"] {
             let event = resolve_source(
                 &fixture,

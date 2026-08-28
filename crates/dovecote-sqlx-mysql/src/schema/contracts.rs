@@ -154,6 +154,7 @@ pub(super) fn marker_check_clause_is_plausible(name: &str, clause: &str) -> bool
     let Some(expected) = expected_marker_check_clause(name) else {
         return false;
     };
+
     let actual = normalize_check_clause(name, clause);
     actual == normalize_check_clause(name, expected)
         || marker_catalog_check_clause(name)
