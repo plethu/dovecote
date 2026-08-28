@@ -79,7 +79,10 @@ jobs:
           docker run --rm --network host -e PGPASSWORD=postgres postgres:17.11
           psql -h 127.0.0.1 -U postgres -d postgres -v ON_ERROR_STOP=1
           -c "ALTER ROLE postgres SET statement_timeout = '5s'; ALTER ROLE postgres SET lock_timeout = '5s';"
-      - run: mise run check
+      - name: Run serialized backend checks
+        env:
+          RUST_TEST_THREADS: "1"
+        run: mise run check
       - name: Run complete-history fixture (PostgreSQL 17.11)
         if: matrix.rust == 'stable'
         env:
@@ -156,7 +159,10 @@ jobs:
           docker run --rm --network host mysql:8.4.11 mysql
           -h127.0.0.1 -P3306 -uroot -pdovecote-test
           -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
-      - run: mise run check
+      - name: Run serialized backend checks
+        env:
+          RUST_TEST_THREADS: "1"
+        run: mise run check
       - name: Run complete-history fixture (MySQL 8.4.11)
         if: matrix.rust == 'stable'
         env:
@@ -233,7 +239,10 @@ jobs:
           docker run --rm --network host mysql:26.7.0 mysql
           -h127.0.0.1 -P3306 -uroot -pdovecote-test
           -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
-      - run: mise run check
+      - name: Run serialized backend checks
+        env:
+          RUST_TEST_THREADS: "1"
+        run: mise run check
       - name: Run complete-history fixture (MySQL Innovation 26.7.0)
         if: matrix.rust == 'stable'
         env:
@@ -310,7 +319,10 @@ jobs:
           docker run --rm --network host mariadb:11.8.6 mariadb
           -h127.0.0.1 -P3306 -uroot -pdovecote-test
           -e "SET GLOBAL time_zone = '+00:00'; SET GLOBAL transaction_isolation = 'REPEATABLE-READ'; SET GLOBAL sql_mode = 'STRICT_TRANS_TABLES'; SET GLOBAL character_set_server = 'utf8mb4'; SET GLOBAL collation_server = 'utf8mb4_bin'; SET GLOBAL innodb_lock_wait_timeout = 5;"
-      - run: mise run check
+      - name: Run serialized backend checks
+        env:
+          RUST_TEST_THREADS: "1"
+        run: mise run check
       - name: Run MariaDB maintenance-window fixture (10.3.17 to 11.8.6)
         if: matrix.rust == 'stable'
         env:
