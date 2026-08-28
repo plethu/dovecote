@@ -18,7 +18,7 @@ use dovecote::{
     QuarantineReason, RowId, StreamName, WorkerId,
 };
 use dovecote_sqlx_mysql::{
-    ClaimError, EnqueueError, MIGRATIONS, MutationError, MySqlDovecote, TransientKind,
+    ClaimError, EnqueueError, MIGRATIONS, MutationError, MySqlDovecote, PageError, TransientKind,
 };
 use sqlx::{MySqlPool, mysql::MySqlPoolOptions, query, query_as, query_scalar};
 use std::error::Error;
@@ -272,7 +272,47 @@ async fn matrix_backend_settings_and_exact_schema() -> Result<(), Box<dyn std::e
         dovecote_sqlx_mysql::BackendKind::MySql | dovecote_sqlx_mysql::BackendKind::MariaDb
     ));
     assert!(info.capabilities.skip_locked);
+    assert_eq!(
+        info.transaction_isolation.to_ascii_uppercase(),
+        "REPEATABLE-READ"
+    );
     adapter.check_schema().await?;
+    pool.close().await;
+    Ok(())
+}
+
+#[tokio::test]
+async fn paging_surfaces_an_event_without_a_delivery_in_live_and_snapshot_reads()
+-> Result<(), Box<dyn std::error::Error>> {
+    let _serial = serialize_live_tests().await;
+    let Some(pool) = live_pool().await? else {
+        return Ok(());
+    };
+
+    install(&pool).await?;
+    clear_conformance_rows(&pool).await?;
+    let adapter = MySqlDovecote::new(pool.clone());
+    let row_id = enqueue_committed(&pool, event("page-orphan")).await?;
+    query("DELETE FROM dovecote_deliveries WHERE event_row_id = ?")
+        .bind(row_id.get())
+        .execute(&pool)
+        .await?;
+
+    let live = adapter.page(None, dovecote::Limit::new(10)?).await;
+    assert!(matches!(
+        live,
+        Err(PageError::Serialization { detail })
+            if detail == format!("event row {} has no required delivery row", row_id.get())
+    ));
+
+    let mut snapshot = adapter.begin_snapshot().await?;
+    let snapshot_page = snapshot.next_page(dovecote::Limit::new(10)?).await;
+    assert!(matches!(
+        snapshot_page,
+        Err(PageError::Serialization { detail })
+            if detail == format!("event row {} has no required delivery row", row_id.get())
+    ));
+    snapshot.rollback().await?;
     pool.close().await;
     Ok(())
 }

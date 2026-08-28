@@ -194,8 +194,8 @@ async fn query_page(
         .map_err(PageError::serialization)
 }
 
-const PAGE_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? ORDER BY e.row_id ASC LIMIT ?";
-const SNAPSHOT_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? AND e.row_id <= ? ORDER BY e.row_id ASC LIMIT ?";
+const PAGE_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? ORDER BY e.row_id ASC LIMIT ?";
+const SNAPSHOT_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? AND e.row_id <= ? ORDER BY e.row_id ASC LIMIT ?";
 
 #[derive(Debug, FromRow)]
 struct PageRow {
@@ -214,9 +214,9 @@ struct PageRow {
     extensions: Vec<u8>,
     data_kind: Option<Vec<u8>>,
     data: Option<Vec<u8>>,
-    state: Vec<u8>,
-    available_at: OffsetDateTime,
-    attempts: i64,
+    state: Option<Vec<u8>>,
+    available_at: Option<OffsetDateTime>,
+    attempts: Option<i64>,
     claim_token: Option<Vec<u8>>,
     claimed_by: Option<Vec<u8>>,
     claim_expires_at: Option<OffsetDateTime>,
@@ -260,9 +260,19 @@ fn parse_failure(
 fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
     let row_id = RowId::new(row.row_id).map_err(|e| e.to_string())?;
     let event = hydrate_event(&row)?;
-    let attempts = AttemptCount::new(row.attempts).map_err(|e| e.to_string())?;
+    let state = row
+        .state
+        .ok_or_else(|| format!("event row {} has no required delivery row", row.row_id))?;
+    let available_at = row
+        .available_at
+        .ok_or_else(|| "delivery row has no available_at".to_owned())?;
+    let attempts = AttemptCount::new(
+        row.attempts
+            .ok_or_else(|| "delivery row has no attempts".to_owned())?,
+    )
+    .map_err(|e| e.to_string())?;
     let failure = parse_failure(row.last_failure_code, row.last_failure_detail)?;
-    let delivery = match row.state.as_slice() {
+    let delivery = match state.as_slice() {
         b"pending" => {
             absent("pending claim token", row.claim_token.as_ref())?;
             absent("pending worker", row.claimed_by.as_ref())?;
@@ -270,7 +280,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
             absent("pending delivered", row.delivered_at.as_ref())?;
             absent("pending quarantined", row.quarantined_at.as_ref())?;
             absent("pending reason", row.quarantine_reason.as_ref())?;
-            DeliverySnapshot::pending(row.available_at, attempts, failure)
+            DeliverySnapshot::pending(available_at, attempts, failure)
         }
         b"claimed" => {
             token_width(row.claim_token.as_deref())?;
@@ -286,7 +296,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
             absent("claimed delivered", row.delivered_at.as_ref())?;
             absent("claimed quarantined", row.quarantined_at.as_ref())?;
             absent("claimed reason", row.quarantine_reason.as_ref())?;
-            DeliverySnapshot::claimed(row.available_at, worker, expires, attempts, failure)
+            DeliverySnapshot::claimed(available_at, worker, expires, attempts, failure)
         }
         b"delivered" => {
             absent("delivered token", row.claim_token.as_ref())?;
@@ -297,7 +307,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
                 .ok_or_else(|| "delivered delivery has no timestamp".to_owned())?;
             absent("delivered quarantined", row.quarantined_at.as_ref())?;
             absent("delivered reason", row.quarantine_reason.as_ref())?;
-            DeliverySnapshot::delivered(row.available_at, delivered, attempts, failure)
+            DeliverySnapshot::delivered(available_at, delivered, attempts, failure)
         }
         b"quarantined" => {
             absent("quarantined token", row.claim_token.as_ref())?;
@@ -313,7 +323,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
                 "quarantine reason",
             )?)
             .map_err(|e| e.to_string())?;
-            DeliverySnapshot::quarantined(row.available_at, at, attempts, failure, reason)
+            DeliverySnapshot::quarantined(available_at, at, attempts, failure, reason)
         }
         _ => return Err("unknown delivery state".to_owned()),
     }

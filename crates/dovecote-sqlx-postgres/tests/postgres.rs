@@ -4,8 +4,8 @@ use dovecote::{
     QuarantineReason, RowId, StreamName, WorkerId,
 };
 use dovecote_sqlx_postgres::{
-    ClaimError, EnqueueError, MIGRATIONS, MutationError, PostgresDovecote, TransientKind,
-    check_schema, enqueue,
+    ClaimError, EnqueueError, MIGRATIONS, MutationError, PageError, PostgresDovecote, SchemaError,
+    TransientKind, check_schema, enqueue,
 };
 use sqlx::{
     PgPool,
@@ -547,6 +547,67 @@ async fn paging_is_ordered_bounded_and_includes_every_delivery_state_when_config
         );
         assert!(!repeated.iter().any(|row| row.row_id() == skipped_id));
         assert_eq!(adapter.page(Some(pending_id), limit).await?, Vec::new());
+        Ok::<_, Box<dyn Error>>(())
+    }
+    .await;
+    database.cleanup().await?;
+    result
+}
+
+#[tokio::test]
+async fn paging_surfaces_an_event_without_a_delivery_in_live_and_snapshot_reads_when_configured()
+-> Result<(), Box<dyn Error>> {
+    let Some(database) = isolated_database().await? else {
+        return Ok(());
+    };
+
+    let result = async {
+        let adapter = PostgresDovecote::new(database.pool.clone());
+        let row_id = enqueue_committed(&database, "page-orphan").await?;
+        query("DELETE FROM dovecote_deliveries WHERE event_row_id = $1")
+            .bind(row_id.get())
+            .execute(&database.pool)
+            .await?;
+
+        let live = adapter.page(None, Limit::new(10)?).await;
+        assert!(matches!(
+            live,
+            Err(PageError::Serialization { detail })
+                if detail == format!("event row {} has no required delivery row", row_id.get())
+        ));
+
+        let mut snapshot = adapter.begin_snapshot().await?;
+        let snapshot_page = snapshot.next_page(Limit::new(10)?).await;
+        assert!(matches!(
+            snapshot_page,
+            Err(PageError::Serialization { detail })
+                if detail == format!("event row {} has no required delivery row", row_id.get())
+        ));
+        snapshot.rollback().await?;
+        Ok::<_, Box<dyn Error>>(())
+    }
+    .await;
+    database.cleanup().await?;
+    result
+}
+
+#[tokio::test]
+async fn schema_check_rejects_an_extra_not_null_column_when_configured()
+-> Result<(), Box<dyn Error>> {
+    let Some(database) = isolated_database().await? else {
+        return Ok(());
+    };
+
+    let result = async {
+        query("ALTER TABLE dovecote_events ADD COLUMN schema_probe TEXT NOT NULL")
+            .execute(&database.pool)
+            .await?;
+        let error = check_schema(&database.pool).await;
+        assert!(matches!(
+            error,
+            Err(SchemaError::MigrationMismatch { detail })
+                if detail == "unexpected column dovecote_events.schema_probe"
+        ));
         Ok::<_, Box<dyn Error>>(())
     }
     .await;

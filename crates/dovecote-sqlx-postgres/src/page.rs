@@ -227,7 +227,7 @@ const PAGE_SQL: &str = r#"
            d.quarantined_at,
            d.quarantine_reason
     FROM dovecote_events AS e
-    JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
+    LEFT JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
     WHERE e.row_id > $1
     ORDER BY e.row_id ASC
     LIMIT $2
@@ -261,7 +261,7 @@ const SNAPSHOT_PAGE_SQL: &str = r#"
            d.quarantined_at,
            d.quarantine_reason
     FROM dovecote_events AS e
-    JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
+    LEFT JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
     WHERE e.row_id > $1 AND e.row_id <= $3
     ORDER BY e.row_id ASC
     LIMIT $2
@@ -284,9 +284,9 @@ struct PageRow {
     extensions: String,
     data_kind: Option<String>,
     data: Option<Vec<u8>>,
-    state: String,
-    available_at: OffsetDateTime,
-    attempts: i64,
+    state: Option<String>,
+    available_at: Option<OffsetDateTime>,
+    attempts: Option<i64>,
     claim_token: Option<Vec<u8>>,
     claimed_by: Option<String>,
     claim_expires_at: Option<OffsetDateTime>,
@@ -300,9 +300,19 @@ struct PageRow {
 fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
     let row_id = RowId::new(row.row_id).map_err(|error| error.to_string())?;
     let event = hydrate_event(&row)?;
-    let attempts = AttemptCount::new(row.attempts).map_err(|error| error.to_string())?;
+    let state = row
+        .state
+        .ok_or_else(|| format!("event row {} has no required delivery row", row.row_id))?;
+    let available_at = row
+        .available_at
+        .ok_or_else(|| "delivery row has no available_at".to_owned())?;
+    let attempts = AttemptCount::new(
+        row.attempts
+            .ok_or_else(|| "delivery row has no attempts".to_owned())?,
+    )
+    .map_err(|error| error.to_string())?;
     let failure = parse_failure(row.last_failure_code, row.last_failure_detail)?;
-    let delivery = match row.state.as_str() {
+    let delivery = match state.as_str() {
         "pending" => {
             require_absent("pending claim token", row.claim_token.as_ref())?;
             require_absent("pending claimed worker", row.claimed_by.as_ref())?;
@@ -310,7 +320,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
             require_absent("pending delivered time", row.delivered_at.as_ref())?;
             require_absent("pending quarantine time", row.quarantined_at.as_ref())?;
             require_absent("pending quarantine reason", row.quarantine_reason.as_ref())?;
-            DeliverySnapshot::pending(row.available_at, attempts, failure)
+            DeliverySnapshot::pending(available_at, attempts, failure)
         }
         "claimed" => {
             require_token_width(row.claim_token.as_deref())?;
@@ -324,7 +334,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
             require_absent("claimed quarantine time", row.quarantined_at.as_ref())?;
             require_absent("claimed quarantine reason", row.quarantine_reason.as_ref())?;
             DeliverySnapshot::claimed(
-                row.available_at,
+                available_at,
                 WorkerId::new(worker).map_err(|error| error.to_string())?,
                 expires_at,
                 attempts,
@@ -343,7 +353,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
                 "delivered quarantine reason",
                 row.quarantine_reason.as_ref(),
             )?;
-            DeliverySnapshot::delivered(row.available_at, delivered_at, attempts, failure)
+            DeliverySnapshot::delivered(available_at, delivered_at, attempts, failure)
         }
         "quarantined" => {
             require_absent("quarantined claim token", row.claim_token.as_ref())?;
@@ -357,7 +367,7 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
                 .quarantine_reason
                 .ok_or_else(|| "quarantined delivery has no quarantine reason".to_owned())?;
             DeliverySnapshot::quarantined(
-                row.available_at,
+                available_at,
                 quarantined_at,
                 attempts,
                 failure,

@@ -142,7 +142,7 @@ pub async fn import_for_migration<'c>(
         detail: "an existing event has no delivery row".to_owned(),
     })?;
 
-    if delivery_matches(&delivery, state, existing.enqueued_at) {
+    if delivery_matches(&delivery, state, existing.enqueued_at)? {
         Ok(ImportOutcome::AlreadyImported {
             row_id: existing_id,
         })
@@ -166,7 +166,9 @@ async fn insert_delivery<'c>(
             Some(database_datetime(delivered_at)),
         ),
         _ => {
-            unreachable!("validated imported delivery state")
+            return Err(ImportError::MigrationMismatch {
+                detail: "adapter does not support this imported delivery state".to_owned(),
+            });
         }
     };
     query(
@@ -201,7 +203,7 @@ fn delivery_matches(
     row: &ExistingDelivery,
     state: ImportedDeliveryState,
     enqueued_at: PrimitiveDateTime,
-) -> bool {
+) -> Result<bool, ImportError> {
     let canonical = row.attempts == 0
         && row.claim_token.is_none()
         && row.claimed_by.is_none()
@@ -211,7 +213,7 @@ fn delivery_matches(
         && row.quarantined_at.is_none()
         && row.quarantine_reason.is_none()
         && row.available_at == enqueued_at;
-    match state {
+    Ok(match state {
         ImportedDeliveryState::Pending => {
             canonical && row.state == b"pending" && row.delivered_at.is_none()
         }
@@ -220,8 +222,12 @@ fn delivery_matches(
                 && row.state == b"delivered"
                 && row.delivered_at == Some(database_datetime(delivered_at))
         }
-        _ => false,
-    }
+        _ => {
+            return Err(ImportError::MigrationMismatch {
+                detail: "adapter does not support this imported delivery state".to_owned(),
+            });
+        }
+    })
 }
 
 fn row_id(value: i64) -> Result<RowId, ImportError> {

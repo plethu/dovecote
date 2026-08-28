@@ -15,7 +15,7 @@ does not run workers, choose transports, apply migrations, or promise FIFO or
 exactly-once delivery.
 
 > [!WARNING]
-> Dovecote is pre-release (`0.1.0`). Rust APIs, the durable schema, and migration
+> Dovecote is pre-release (`0.1.1`). Rust APIs, the durable schema, and migration
 > tooling may change before v1. Backend support is version-specific; see the
 > [support matrix](docs/support-matrix.md). Existing Keepsake deployments on
 > MariaDB use the documented [maintenance-window migration

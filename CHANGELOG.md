@@ -4,6 +4,17 @@
 
 No changes yet.
 
+## [0.1.1] - 2026-08-28
+
+### Fixed
+
+- Live and snapshot paging now includes every event row and reports a typed
+  serialization error when its delivery row is missing.
+- PostgreSQL schema checks reject unexpected columns, and MySQL/MariaDB
+  readiness consistently requires `REPEATABLE-READ` for finite snapshots.
+- Migration imports return a typed error if a future imported delivery state is
+  not supported by this adapter.
+
 ## [0.1.0] - 2026-08-27
 
 ### Added

@@ -548,6 +548,16 @@ async fn check_columns(
     .fetch_all(&mut *connection)
     .await
     .map_err(|source| SchemaError::sql("check columns", source))?;
+    if let Some(column) = columns.iter().find(|column| {
+        !expected
+            .iter()
+            .any(|specification| specification.name == column.column_name)
+    }) {
+        return Err(SchemaError::MigrationMismatch {
+            detail: format!("unexpected column {}.{}", table, column.column_name),
+        });
+    }
+
     for specification in expected {
         let Some(column) = columns
             .iter()

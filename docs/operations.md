@@ -128,14 +128,14 @@ Four versions are separate contracts:
 
 | Contract | First-release value | Changes require |
 | --- | --- | --- |
-| Rust crate semver | `0.1.0` | Normal Rust API compatibility and release notes. The initial MSRV is Rust 1.94. |
+| Rust crate semver | `0.1.1` | Normal Rust API compatibility and release notes. The initial MSRV is Rust 1.94. |
 | Durable schema | Version `1` | A forward-only migration, preceding-version fixtures, compatibility metadata, and an application migration plan. |
 | Tagged extension encoding | Version 1 encoding in the durable schema | Round-trip fixtures preserving abstract extension types and values. |
 | CloudEvents projection | CloudEvents 1.0-compatible deterministic output | Updated golden vectors, official v1.0.2 JSON Schema validation, external SDK parsing, and transport-binding validation when bytes or meaning change. |
 
-The current migration metadata starts at crate `0.1.0` and is not marked
-rolling-compatible. A deployment must therefore use a documented compatible
-crate/schema pair and a maintenance window whenever a schema change cannot
+The schema version 1 migration metadata has a minimum crate floor of `0.1.0`
+and is not marked rolling-compatible. A deployment must therefore use a
+documented compatible crate/schema pair and a maintenance window whenever a schema change cannot
 tolerate old and new processes together. `check_schema` rejects a crate that
 is too old or too new; it never applies a migration.
 

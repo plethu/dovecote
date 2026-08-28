@@ -163,13 +163,13 @@ pub(crate) async fn detect_on_connection(
         });
     }
 
-    if !matches!(
-        probe.transaction_isolation.to_ascii_uppercase().as_str(),
-        "REPEATABLE-READ" | "READ-COMMITTED"
-    ) {
+    if !probe
+        .transaction_isolation
+        .eq_ignore_ascii_case("REPEATABLE-READ")
+    {
         return Err(SchemaError::BackendMismatch {
             detail: format!(
-                "unsupported transaction isolation {:?}",
+                "transaction isolation must be REPEATABLE-READ, got {:?}",
                 probe.transaction_isolation
             ),
         });
