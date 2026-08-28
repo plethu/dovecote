@@ -313,6 +313,10 @@ async fn paging_surfaces_an_event_without_a_delivery_in_live_and_snapshot_reads(
             if detail == format!("event row {} has no required delivery row", row_id.get())
     ));
     snapshot.rollback().await?;
+    query("DELETE FROM dovecote_events WHERE row_id = ?")
+        .bind(row_id.get())
+        .execute(&pool)
+        .await?;
     pool.close().await;
     Ok(())
 }
@@ -373,6 +377,10 @@ async fn matrix_enqueue_claim_ack_and_snapshot_commit() -> Result<(), Box<dyn st
         .fetch_one(&pool)
         .await?;
     assert_eq!(unchanged, row_id.get());
+    query("DELETE FROM dovecote_events WHERE row_id = ?")
+        .bind(direct_id)
+        .execute(&pool)
+        .await?;
     let worker = WorkerId::new("mysql-worker")?;
     let claimed = adapter
         .claim(
