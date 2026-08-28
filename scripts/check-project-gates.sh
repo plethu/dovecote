@@ -5,7 +5,8 @@ if [[ "${DOVECOTE_GATES_MISE_REEXEC:-0}" != "1" ]] && {
   ! command -v ast-grep >/dev/null 2>&1 ||
   ! command -v taplo >/dev/null 2>&1 ||
   ! command -v typos >/dev/null 2>&1 ||
-  ! command -v just >/dev/null 2>&1
+  ! command -v just >/dev/null 2>&1 ||
+  ! command -v cargo-deny >/dev/null 2>&1
 }; then
   if command -v mise >/dev/null 2>&1; then
     export DOVECOTE_GATES_MISE_REEXEC=1
@@ -38,6 +39,19 @@ echo "== cargo clippy =="
 (
   cd "$repo_root"
   cargo clippy --workspace --all-targets --all-features -- -D warnings
+)
+
+echo "== cargo doc (strict) =="
+(
+  cd "$repo_root"
+  RUSTDOCFLAGS="${RUSTDOCFLAGS:-} -D warnings" \
+    cargo doc --workspace --all-features --no-deps
+)
+
+echo "== cargo deny supply-chain checks =="
+(
+  cd "$repo_root"
+  just supply-chain
 )
 
 echo "== cargo test =="

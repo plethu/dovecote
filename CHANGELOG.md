@@ -2,7 +2,23 @@
 
 ## [Unreleased]
 
-No changes yet.
+### Core
+
+- Canonicalize accepted timestamps to UTC at event, extension, import, and
+  delivery-state construction boundaries.
+- Distinguish empty values from oversized values in the public validation
+  taxonomy, with complete core API rustdoc and dependency hygiene.
+- Mark public errors, outcomes, and backend metadata `#[non_exhaustive]` ahead
+  of 1.0 so their APIs can evolve without making exhaustive matches brittle.
+- Added a 1.0 readiness checklist, a runnable SQLite walkthrough, and clarified
+  all-stream publication ownership and application-owned operational queries.
+- Added validated `TenantId` values and tenant metadata on claimed and paged
+  state. All SQLx adapters now expose tenant-scoped and explicit admin handles;
+  durable identity is tenant-scoped as `(tenant_id, source, id)` while the
+  projected CloudEvents identity remains `(source, id)`.
+- Added clean tenant-aware baselines and explicit v1 prepare/backfill/activate
+  paths for PostgreSQL, MySQL/MariaDB, and SQLite. These 0.2.0 changes remain
+  pre-release until the exact backend evidence in the support matrix is rerun.
 
 ## [0.1.1] - 2026-08-28
 

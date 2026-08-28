@@ -6,8 +6,12 @@
 //! untouched pending shape produced by `import_for_migration` can cross this
 //! boundary.
 
-use crate::{error::FinalizeError, schema::check_schema_connection};
-use dovecote::{FinalizeOutcome, ImportedDeliveryState, RowId};
+use crate::{
+    delivery_state::{DeliveryRow, canonical, canonical_pending},
+    error::FinalizeError,
+    schema::check_schema_connection,
+};
+use dovecote::{FinalizeOutcome, ImportedDeliveryState, RowId, TenantId};
 use sqlx::{FromRow, Postgres, Transaction, query, query_as};
 use time::OffsetDateTime;
 
@@ -20,8 +24,9 @@ use time::OffsetDateTime;
 /// every other non-canonical, claimed, failed, quarantined, or timestamp-
 /// differing state returns a typed conflict. PostgreSQL stores these instants
 /// at microsecond precision, which is also enforced by Dovecote validation.
-pub async fn finalize_pending_delivery_for_migration<'c>(
+pub(crate) async fn finalize_for_scope<'c>(
     transaction: &mut Transaction<'c, Postgres>,
+    tenant_id: &TenantId,
     row_id: RowId,
     delivered_at: OffsetDateTime,
 ) -> Result<FinalizeOutcome, FinalizeError> {
@@ -32,8 +37,9 @@ pub async fn finalize_pending_delivery_for_migration<'c>(
         .map_err(map_schema_error)?;
 
     let event = query_as::<_, EventRow>(
-        "SELECT enqueued_at FROM dovecote_events WHERE row_id = $1 FOR UPDATE",
+        "SELECT enqueued_at FROM dovecote_events WHERE tenant_id = $1 AND row_id = $2 FOR UPDATE",
     )
+    .bind(tenant_id.as_str())
     .bind(row_id.get())
     .fetch_optional(&mut **transaction)
     .await
@@ -41,8 +47,9 @@ pub async fn finalize_pending_delivery_for_migration<'c>(
     .ok_or(FinalizeError::NotFound)?;
 
     let delivery = query_as::<_, DeliveryRow>(
-        "SELECT state, attempts, claim_token, claimed_by, claim_expires_at, last_failure_code, last_failure_detail, delivered_at, quarantined_at, quarantine_reason, available_at FROM dovecote_deliveries WHERE event_row_id = $1 FOR UPDATE",
+        "SELECT state, attempts, claim_token, claimed_by, claim_expires_at, last_failure_code, last_failure_detail, delivered_at, quarantined_at, quarantine_reason, available_at FROM dovecote_deliveries WHERE tenant_id = $1 AND event_row_id = $2 FOR UPDATE",
     )
+    .bind(tenant_id.as_str())
     .bind(row_id.get())
     .fetch_optional(&mut **transaction)
     .await
@@ -63,9 +70,10 @@ pub async fn finalize_pending_delivery_for_migration<'c>(
     }
 
     let result = query(
-        "UPDATE dovecote_deliveries SET state = 'delivered', delivered_at = $1 WHERE event_row_id = $2 AND state = 'pending' AND attempts = 0 AND claim_token IS NULL AND claimed_by IS NULL AND claim_expires_at IS NULL AND last_failure_code IS NULL AND last_failure_detail IS NULL AND delivered_at IS NULL AND quarantined_at IS NULL AND quarantine_reason IS NULL AND available_at = $3",
+        "UPDATE dovecote_deliveries SET state = 'delivered', delivered_at = $1 WHERE tenant_id = $2 AND event_row_id = $3 AND state = 'pending' AND attempts = 0 AND claim_token IS NULL AND claimed_by IS NULL AND claim_expires_at IS NULL AND last_failure_code IS NULL AND last_failure_detail IS NULL AND delivered_at IS NULL AND quarantined_at IS NULL AND quarantine_reason IS NULL AND available_at = $4",
     )
     .bind(delivered_at)
+    .bind(tenant_id.as_str())
     .bind(row_id.get())
     .bind(event.enqueued_at)
     .execute(&mut **transaction)
@@ -80,37 +88,6 @@ pub async fn finalize_pending_delivery_for_migration<'c>(
 #[derive(Debug, FromRow)]
 struct EventRow {
     enqueued_at: OffsetDateTime,
-}
-
-#[derive(Debug, FromRow)]
-struct DeliveryRow {
-    state: String,
-    attempts: i64,
-    claim_token: Option<Vec<u8>>,
-    claimed_by: Option<String>,
-    claim_expires_at: Option<OffsetDateTime>,
-    last_failure_code: Option<String>,
-    last_failure_detail: Option<String>,
-    delivered_at: Option<OffsetDateTime>,
-    quarantined_at: Option<OffsetDateTime>,
-    quarantine_reason: Option<String>,
-    available_at: OffsetDateTime,
-}
-
-fn canonical(row: &DeliveryRow, enqueued_at: OffsetDateTime) -> bool {
-    row.attempts == 0
-        && row.claim_token.is_none()
-        && row.claimed_by.is_none()
-        && row.claim_expires_at.is_none()
-        && row.last_failure_code.is_none()
-        && row.last_failure_detail.is_none()
-        && row.quarantined_at.is_none()
-        && row.quarantine_reason.is_none()
-        && row.available_at == enqueued_at
-}
-
-fn canonical_pending(row: &DeliveryRow, enqueued_at: OffsetDateTime) -> bool {
-    canonical(row, enqueued_at) && row.state == "pending" && row.delivered_at.is_none()
 }
 
 fn map_schema_error(error: crate::SchemaError) -> FinalizeError {

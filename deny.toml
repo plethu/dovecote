@@ -1,0 +1,38 @@
+# Dependency policy for cargo-deny. This is repository policy, not an
+# independent security audit or a claim of compliance.
+
+[advisories]
+version = 2
+# Temporary, narrowly scoped exception for SQLx's optional MySQL RSA
+# authentication backend. Review by 2026-12-31, or sooner if SQLx ships a
+# replacement/patched rsa release, the MySQL auth policy changes, or this
+# workspace begins a private-key RSA operation. Remove the exception then.
+# RUSTSEC-2023-0071 covers private-key timing leakage; SQLx uses this path only
+# to encrypt a password with the server's public key.
+ignore = ["RUSTSEC-2023-0071"]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[licenses]
+version = 2
+confidence-threshold = 0.8
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "LGPL-2.1-or-later",
+    "MIT",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

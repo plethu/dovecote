@@ -5,7 +5,7 @@ use crate::{
     migration::{current_migration, migration_is_usable},
     transaction_is_write,
 };
-use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId};
+use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, Sqlite, Transaction, query, query_as, query_scalar};
 use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 
@@ -14,8 +14,9 @@ use time::{OffsetDateTime, UtcOffset, format_description::well_known::Rfc3339};
 /// The caller remains responsible for commit or rollback. No migration or
 /// implicit transaction is started here, so application state and the outbox
 /// rows retain one atomic commit boundary.
-pub async fn enqueue<'c>(
+pub(crate) async fn enqueue_for_scope<'c>(
     transaction: &mut Transaction<'c, Sqlite>,
+    tenant_id: &TenantId,
     event: NewEvent,
 ) -> Result<EnqueueOutcome, EnqueueError> {
     // A deferred transaction can read the identity before another connection
@@ -39,8 +40,9 @@ pub async fn enqueue<'c>(
     });
     let occurred_at = event.time().map(format_timestamp);
     let inserted = query_as::<_, InsertedEvent>(
-        "INSERT INTO dovecote_events (stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(source, event_id) DO NOTHING RETURNING row_id, enqueued_at",
+        "INSERT INTO dovecote_events (tenant_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, source, event_id) DO NOTHING RETURNING row_id, enqueued_at",
     )
+    .bind(tenant_id.as_str())
     .bind(event.stream().as_str())
     .bind(event.specversion())
     .bind(event.id().as_str())
@@ -60,15 +62,15 @@ pub async fn enqueue<'c>(
 
     let Some(inserted) = inserted else {
         let existing = query_as::<_, ExistingEvent>(
-            "SELECT row_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at FROM dovecote_events WHERE source = ? COLLATE BINARY AND event_id = ? COLLATE BINARY",
+            "SELECT row_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at FROM dovecote_events WHERE tenant_id = ? COLLATE BINARY AND source = ? COLLATE BINARY AND event_id = ? COLLATE BINARY",
         )
+        .bind(tenant_id.as_str())
         .bind(event.source().as_str())
         .bind(event.id().as_str())
         .fetch_optional(&mut **transaction)
         .await
         .map_err(|source| EnqueueError::sql("find duplicate event", source))?
         .ok_or_else(|| EnqueueError::sql("resolve duplicate event", sqlx::Error::Protocol("identity disappeared after conflict".to_owned())))?;
-
         let existing_id = RowId::new(existing.row_id)
             .map_err(|error| EnqueueError::serialization(error.to_string()))?;
         validate_existing_event(&existing).map_err(EnqueueError::serialization)?;
@@ -78,12 +80,14 @@ pub async fn enqueue<'c>(
             });
         }
 
-        let delivery_exists: Option<i64> =
-            query_scalar("SELECT event_row_id FROM dovecote_deliveries WHERE event_row_id = ?")
-                .bind(existing.row_id)
-                .fetch_optional(&mut **transaction)
-                .await
-                .map_err(|source| EnqueueError::sql("check duplicate delivery", source))?;
+        let delivery_exists: Option<i64> = query_scalar(
+            "SELECT event_row_id FROM dovecote_deliveries WHERE tenant_id = ? AND event_row_id = ?",
+        )
+        .bind(tenant_id.as_str())
+        .bind(existing.row_id)
+        .fetch_optional(&mut **transaction)
+        .await
+        .map_err(|source| EnqueueError::sql("check duplicate delivery", source))?;
         if delivery_exists.is_none() {
             return Err(EnqueueError::MigrationMismatch {
                 detail: "an existing event has no delivery row".to_owned(),
@@ -97,8 +101,8 @@ pub async fn enqueue<'c>(
 
     let row_id = RowId::new(inserted.row_id)
         .map_err(|error| EnqueueError::serialization(error.to_string()))?;
-    query("INSERT INTO dovecote_deliveries (event_row_id, state, available_at) VALUES (?, 'pending', ?)")
-        .bind(inserted.row_id).bind(inserted.enqueued_at)
+    query("INSERT INTO dovecote_deliveries (tenant_id, event_row_id, state, available_at) VALUES (?, ?, 'pending', ?)")
+        .bind(tenant_id.as_str()).bind(inserted.row_id).bind(inserted.enqueued_at)
         .execute(&mut **transaction).await
         .map_err(|source| EnqueueError::sql("insert delivery", source))?;
     Ok(EnqueueOutcome::Enqueued { row_id })

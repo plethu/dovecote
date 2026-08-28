@@ -1,16 +1,17 @@
 //! MySQL/MariaDB live and finite consistent-snapshot paging.
 
-use crate::{backend, error::PageError};
+use crate::{backend, error::PageError, hydrate};
 use dovecote::{
-    AttemptCount, DeliverySnapshot, EventData, EventSizeLimit, Failure, Limit, NewEvent,
-    PagedEvent, QuarantineReason, RowId, StoredEvent, WorkerId,
+    AttemptCount, DeliverySnapshot, Failure, Limit, PagedEvent, QuarantineReason, RowId, TenantId,
+    WorkerId,
 };
 use sqlx::{FromRow, MySql, MySqlConnection, MySqlPool, Transaction, query_as, query_scalar};
 use std::marker::PhantomData;
 use time::OffsetDateTime;
 
-pub async fn page(
+pub(crate) async fn page_for_scope(
     pool: &MySqlPool,
+    tenant_id: Option<&TenantId>,
     after_row_id: Option<RowId>,
     limit: Limit,
 ) -> Result<Vec<PagedEvent>, PageError> {
@@ -21,8 +22,9 @@ pub async fn page(
     backend::detect_on_connection(&mut connection)
         .await
         .map_err(schema_to_page)?;
-    query_page(
+    query_page_scoped(
         &mut connection,
+        tenant_id,
         after_row_id.map_or(0, RowId::get),
         None,
         limit,
@@ -30,7 +32,10 @@ pub async fn page(
     .await
 }
 
-pub async fn begin_snapshot(pool: &MySqlPool) -> Result<SnapshotPager, PageError> {
+pub(crate) async fn begin_snapshot_for_scope(
+    pool: &MySqlPool,
+    tenant_id: Option<&TenantId>,
+) -> Result<SnapshotPager, PageError> {
     let mut transaction = pool
         .begin_with(sqlx::AssertSqlSafe(
             "START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY",
@@ -65,33 +70,37 @@ pub async fn begin_snapshot(pool: &MySqlPool) -> Result<SnapshotPager, PageError
         });
     }
 
-    let upper_bound =
-        match query_scalar::<_, Option<i64>>("SELECT MAX(row_id) FROM dovecote_events")
-            .fetch_one(&mut *transaction)
-            .await
+    let upper_bound = match query_scalar::<_, Option<i64>>(
+        "SELECT MAX(row_id) FROM dovecote_events WHERE (? IS NULL OR tenant_id = ?)",
+    )
+    .bind(tenant_id.map(|value| value.as_str().as_bytes().to_vec()))
+    .bind(tenant_id.map(|value| value.as_str().as_bytes().to_vec()))
+    .fetch_one(&mut *transaction)
+    .await
+    {
+        Ok(value) => match value
+            .map(|value| {
+                RowId::new(value).map_err(|error| PageError::serialization(error.to_string()))
+            })
+            .transpose()
         {
-            Ok(value) => match value
-                .map(|value| {
-                    RowId::new(value).map_err(|error| PageError::serialization(error.to_string()))
-                })
-                .transpose()
-            {
-                Ok(value) => value,
-                Err(error) => {
-                    let _ = transaction.rollback().await;
-                    return Err(error);
-                }
-            },
-            Err(source) => {
+            Ok(value) => value,
+            Err(error) => {
                 let _ = transaction.rollback().await;
-                return Err(PageError::sql("read snapshot upper row ID", source));
+                return Err(error);
             }
-        };
+        },
+        Err(source) => {
+            let _ = transaction.rollback().await;
+            return Err(PageError::sql("read snapshot upper row ID", source));
+        }
+    };
     Ok(SnapshotPager {
         transaction,
         upper_bound,
         cursor: None,
         exhausted: upper_bound.is_none(),
+        tenant_id: tenant_id.cloned(),
         _not_send: PhantomData,
     })
 }
@@ -110,18 +119,23 @@ pub struct SnapshotPager {
     cursor: Option<RowId>,
     exhausted: bool,
     _not_send: PhantomData<*mut ()>,
+    tenant_id: Option<TenantId>,
 }
 
 impl SnapshotPager {
+    /// Returns the last row ID returned by this pager.
     pub const fn cursor(&self) -> Option<RowId> {
         self.cursor
     }
+    /// Returns the snapshot's fixed upper row-ID bound.
     pub const fn upper_bound(&self) -> Option<RowId> {
         self.upper_bound
     }
+    /// Reports whether all rows in the snapshot have been returned.
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted
     }
+    /// Reads the next bounded page from this snapshot.
     pub async fn next_page(&mut self, limit: Limit) -> Result<Vec<PagedEvent>, PageError> {
         if self.exhausted {
             return Ok(Vec::new());
@@ -130,8 +144,9 @@ impl SnapshotPager {
         let upper = self
             .upper_bound
             .expect("non-exhausted snapshot has upper bound");
-        let rows = query_page(
+        let rows = query_page_scoped(
             &mut self.transaction,
+            self.tenant_id.as_ref(),
             self.cursor.map_or(0, RowId::get),
             Some(upper.get()),
             limit,
@@ -147,59 +162,68 @@ impl SnapshotPager {
         }
         Ok(rows)
     }
+    /// Commits and closes the snapshot transaction.
     pub async fn finish(self) -> Result<(), PageError> {
         self.transaction
             .commit()
             .await
             .map_err(|source| PageError::sql("finish snapshot transaction", source))
     }
+    /// Rolls back and closes the snapshot transaction.
     pub async fn rollback(self) -> Result<(), PageError> {
         self.transaction
             .rollback()
             .await
             .map_err(|source| PageError::sql("rollback snapshot transaction", source))
     }
+    /// Rolls back and closes the snapshot transaction.
     pub async fn close(self) -> Result<(), PageError> {
         self.rollback().await
     }
 }
 
-async fn query_page(
+async fn query_page_scoped(
     connection: &mut MySqlConnection,
+    tenant_id: Option<&TenantId>,
     after: i64,
     upper: Option<i64>,
     limit: Limit,
 ) -> Result<Vec<PagedEvent>, PageError> {
-    let rows = match upper {
-        Some(upper) => {
-            query_as::<_, PageRow>(SNAPSHOT_SQL)
-                .bind(after)
-                .bind(upper)
-                .bind(i64::from(limit.get()))
-                .fetch_all(&mut *connection)
-                .await
-        }
-        None => {
-            query_as::<_, PageRow>(PAGE_SQL)
-                .bind(after)
-                .bind(i64::from(limit.get()))
-                .fetch_all(&mut *connection)
-                .await
-        }
+    let sql = match (tenant_id.is_some(), upper.is_some()) {
+        (false, false) => PAGE_SQL,
+        (false, true) => SNAPSHOT_SQL,
+        (true, false) => SCOPED_PAGE_SQL,
+        (true, true) => SCOPED_SNAPSHOT_SQL,
+    };
+    let mut request = query_as::<_, PageRow>(sql).bind(after);
+    if let Some(upper) = upper {
+        request = request.bind(upper);
     }
-    .map_err(|source| PageError::sql("read event page", source))?;
+
+    if let Some(tenant_id) = tenant_id {
+        request = request.bind(tenant_id.as_str().as_bytes());
+    }
+
+    request = request.bind(i64::from(limit.get()));
+    let rows = request
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| PageError::sql("read event page", source))?;
     rows.into_iter()
         .map(hydrate_page)
         .collect::<Result<Vec<_>, _>>()
         .map_err(PageError::serialization)
 }
 
-const PAGE_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? ORDER BY e.row_id ASC LIMIT ?";
-const SNAPSHOT_SQL: &str = "SELECT e.row_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.event_row_id=e.row_id WHERE e.row_id > ? AND e.row_id <= ? ORDER BY e.row_id ASC LIMIT ?";
+const PAGE_SQL: &str = "SELECT e.row_id,e.tenant_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.tenant_id=e.tenant_id AND d.event_row_id=e.row_id WHERE e.row_id > ? ORDER BY e.row_id ASC LIMIT ?";
+const SNAPSHOT_SQL: &str = "SELECT e.row_id,e.tenant_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.tenant_id=e.tenant_id AND d.event_row_id=e.row_id WHERE e.row_id > ? AND e.row_id <= ? ORDER BY e.row_id ASC LIMIT ?";
+const SCOPED_PAGE_SQL: &str = "SELECT e.row_id,e.tenant_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.tenant_id=e.tenant_id AND d.event_row_id=e.row_id WHERE e.row_id > ? AND e.tenant_id = ? ORDER BY e.row_id ASC LIMIT ?";
+const SCOPED_SNAPSHOT_SQL: &str = "SELECT e.row_id,e.tenant_id,e.stream,e.specversion,e.event_id,e.source,e.event_type,e.subject,e.occurred_at,e.enqueued_at,e.datacontenttype,e.dataschema,e.partitionkey,e.extensions,e.data_kind,e.data,d.state,d.available_at,d.attempts,d.claim_token,d.claimed_by,d.claim_expires_at,d.last_failure_code,d.last_failure_detail,d.delivered_at,d.quarantined_at,d.quarantine_reason FROM dovecote_events e LEFT JOIN dovecote_deliveries d ON d.tenant_id=e.tenant_id AND d.event_row_id=e.row_id WHERE e.row_id > ? AND e.row_id <= ? AND e.tenant_id = ? ORDER BY e.row_id ASC LIMIT ?";
 
 #[derive(Debug, FromRow)]
 struct PageRow {
     row_id: i64,
+    tenant_id: Vec<u8>,
     stream: Vec<u8>,
     specversion: Vec<u8>,
     event_id: Vec<u8>,
@@ -258,8 +282,23 @@ fn parse_failure(
 }
 
 fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
+    let tenant_id = TenantId::new(strv(&row.tenant_id, "tenant id")?).map_err(|e| e.to_string())?;
     let row_id = RowId::new(row.row_id).map_err(|e| e.to_string())?;
-    let event = hydrate_event(&row)?;
+    let event = hydrate::hydrate_event(&hydrate::EventColumns {
+        stream: &row.stream,
+        specversion: &row.specversion,
+        event_id: &row.event_id,
+        source: &row.source,
+        event_type: &row.event_type,
+        subject: row.subject.as_deref(),
+        occurred_at: row.occurred_at,
+        datacontenttype: row.datacontenttype.as_deref(),
+        dataschema: row.dataschema.as_deref(),
+        partitionkey: row.partitionkey.as_deref(),
+        extensions: &row.extensions,
+        data_kind: row.data_kind.as_deref(),
+        data: row.data.as_deref(),
+    })?;
     let state = row
         .state
         .ok_or_else(|| format!("event row {} has no required delivery row", row.row_id))?;
@@ -328,75 +367,9 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
         _ => return Err("unknown delivery state".to_owned()),
     }
     .map_err(|e| e.to_string())?;
-    PagedEvent::new(row_id, event, row.enqueued_at, delivery).map_err(|e| e.to_string())
+    PagedEvent::new(tenant_id, row_id, event, row.enqueued_at, delivery).map_err(|e| e.to_string())
 }
 
-#[allow(clippy::single_match)]
-fn hydrate_event(row: &PageRow) -> Result<StoredEvent, String> {
-    if row.specversion.as_slice() != dovecote::SPEC_VERSION.as_bytes() {
-        return Err("stored event has unsupported specversion".to_owned());
-    }
-
-    let stream =
-        dovecote::StreamName::new(strv(&row.stream, "stream")?).map_err(|e| e.to_string())?;
-    let id = dovecote::EventId::new(strv(&row.event_id, "event id")?).map_err(|e| e.to_string())?;
-    let source =
-        dovecote::EventSource::new(strv(&row.source, "source")?).map_err(|e| e.to_string())?;
-    let event_type = dovecote::EventType::new(strv(&row.event_type, "event type")?)
-        .map_err(|e| e.to_string())?;
-    let mut b = NewEvent::builder(stream, id, source, event_type);
-    // These optional CloudEvents attributes are independent, not priority
-    // policy. Their source-column order stays explicit for deterministic
-    // hydration.
-    // Each optional CloudEvents attribute is hydrated independently; order is
-    // column order, not a policy cascade.
-    let _ = ();
-    if let Some(v) = &row.subject {
-        b = b.subject(dovecote::EventSubject::new(strv(v, "subject")?).map_err(|e| e.to_string())?);
-    }
-
-    let _ = ();
-    if let Some(v) = row.occurred_at {
-        b = b.time(v);
-    }
-
-    let _ = ();
-    if let Some(v) = &row.datacontenttype {
-        b = b.datacontenttype(
-            dovecote::ContentType::new(strv(v, "content type")?).map_err(|e| e.to_string())?,
-        );
-    }
-
-    let _ = ();
-    if let Some(v) = &row.dataschema {
-        b = b.dataschema(
-            dovecote::SchemaUri::new(strv(v, "schema URI")?).map_err(|e| e.to_string())?,
-        );
-    }
-
-    let _ = ();
-    if let Some(v) = &row.partitionkey {
-        b = b.partitionkey(
-            dovecote::PartitionKey::new(strv(v, "partition key")?).map_err(|e| e.to_string())?,
-        );
-    }
-    b = b.extensions(
-        dovecote::Extensions::from_canonical_json(&strv(&row.extensions, "extensions")?)
-            .map_err(|e| e.to_string())?,
-    );
-    match (&row.data_kind, &row.data) {
-        (None, None) => {}
-        (Some(k), Some(v)) if k.as_slice() == b"json" => {
-            b = b.data(EventData::json(v.clone()).map_err(|e| e.to_string())?)
-        }
-        (Some(k), Some(v)) if k.as_slice() == b"binary" => b = b.data(EventData::binary(v.clone())),
-        _ => return Err("stored data kind and data columns do not agree".to_owned()),
-    }
-    b.build_with_limit(EventSizeLimit::new(usize::MAX).expect("nonzero"))
-        .map_err(|e| e.to_string())?
-        .into_stored()
-        .map_err(|e| e.to_string())
-}
 fn schema_to_page(error: crate::SchemaError) -> PageError {
     match error {
         crate::SchemaError::BackendMismatch { detail } => PageError::BackendMismatch { detail },

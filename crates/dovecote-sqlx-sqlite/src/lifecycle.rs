@@ -12,28 +12,17 @@
 use crate::{
     BusyConfig, begin_immediate, checked_milliseconds, commit_transaction,
     enqueue::parse_timestamp,
-    error::{ClaimError, MutationError},
+    error::ClaimError,
     hydrate::{DurableRow, hydrate_event},
     validate_busy_config,
 };
-use dovecote::{
-    AttemptCount, ClaimToken, ClaimedEvent, Delay, DeliveryState, Failure, Lease, Limit,
-    QuarantineReason, RowId, WorkerId,
-};
-use sqlx::{FromRow, Sqlite, SqlitePool, Transaction, query, query_as, query_scalar};
+use dovecote::{AttemptCount, ClaimToken, ClaimedEvent, Lease, Limit, RowId, TenantId, WorkerId};
+use sqlx::{Sqlite, SqlitePool, Transaction, query_as, query_scalar};
 use std::sync::atomic::AtomicBool;
 #[cfg(test)]
 use std::sync::atomic::Ordering;
 
-pub async fn claim(
-    pool: &SqlitePool,
-    worker: WorkerId,
-    lease_for: Lease,
-    limit: Limit,
-) -> Result<Vec<ClaimedEvent>, ClaimError> {
-    claim_with_config(pool, worker, lease_for, limit, BusyConfig::default()).await
-}
-
+#[cfg(test)]
 pub(crate) async fn claim_with_config(
     pool: &SqlitePool,
     worker: WorkerId,
@@ -46,6 +35,30 @@ pub(crate) async fn claim_with_config(
     claim_with_entropy(pool, worker, lease_for, limit, busy, &mut entropy, None).await
 }
 
+pub(crate) async fn claim_for_scope(
+    pool: &SqlitePool,
+    tenant_id: Option<&TenantId>,
+    worker: WorkerId,
+    lease_for: Lease,
+    limit: Limit,
+    busy: BusyConfig,
+) -> Result<Vec<ClaimedEvent>, ClaimError> {
+    validate_busy_config(busy).map_err(|detail| ClaimError::Configuration { detail })?;
+    let mut entropy = OsEntropy;
+    claim_with_entropy_scoped(
+        pool,
+        tenant_id,
+        worker,
+        lease_for,
+        limit,
+        busy,
+        &mut entropy,
+        None,
+    )
+    .await
+}
+
+#[cfg(test)]
 async fn claim_with_entropy<E: EntropySource>(
     pool: &SqlitePool,
     worker: WorkerId,
@@ -55,9 +68,30 @@ async fn claim_with_entropy<E: EntropySource>(
     entropy: &mut E,
     failpoint: Option<&AtomicBool>,
 ) -> Result<Vec<ClaimedEvent>, ClaimError> {
+    claim_with_entropy_scoped(
+        pool, None, worker, lease_for, limit, busy, entropy, failpoint,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn claim_with_entropy_scoped<E: EntropySource>(
+    pool: &SqlitePool,
+    tenant_id: Option<&TenantId>,
+    worker: WorkerId,
+    lease_for: Lease,
+    limit: Limit,
+    busy: BusyConfig,
+    entropy: &mut E,
+    failpoint: Option<&AtomicBool>,
+) -> Result<Vec<ClaimedEvent>, ClaimError> {
     let mut tries = 0;
     loop {
-        match claim_once(pool, &worker, lease_for, limit, busy, entropy, failpoint).await {
+        match claim_once(
+            pool, tenant_id, &worker, lease_for, limit, busy, entropy, failpoint,
+        )
+        .await
+        {
             Err(error) if error.busy_source().is_some() && tries < busy.retries() => {
                 tries += 1;
                 continue;
@@ -68,8 +102,10 @@ async fn claim_with_entropy<E: EntropySource>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn claim_once(
     pool: &SqlitePool,
+    tenant_id: Option<&TenantId>,
     worker: &WorkerId,
     lease_for: Lease,
     limit: Limit,
@@ -91,13 +127,26 @@ async fn claim_once(
             .await;
         }
     };
-    let candidates = match query_as::<_, DurableRow>(CLAIM_SQL)
-        .bind(&operation_time)
-        .bind(&operation_time)
-        .bind(i64::from(limit.get()))
-        .fetch_all(&mut *transaction)
-        .await
-    {
+    let candidates = match tenant_id {
+        Some(tenant_id) => {
+            query_as::<_, DurableRow>(SCOPED_CLAIM_SQL)
+                .bind(tenant_id.as_str())
+                .bind(&operation_time)
+                .bind(&operation_time)
+                .bind(i64::from(limit.get()))
+                .fetch_all(&mut *transaction)
+                .await
+        }
+        None => {
+            query_as::<_, DurableRow>(CLAIM_SQL)
+                .bind(&operation_time)
+                .bind(&operation_time)
+                .bind(i64::from(limit.get()))
+                .fetch_all(&mut *transaction)
+                .await
+        }
+    };
+    let candidates = match candidates {
         Ok(value) => value,
         Err(source) => {
             return rollback_claim(
@@ -151,16 +200,18 @@ async fn claim_once(
                 return rollback_claim(transaction, ClaimError::serialization(error)).await;
             }
         };
-        prepared.push((row_id, candidate.row_id, event, attempts, token));
+        let tenant_id = TenantId::new(candidate.tenant_id.clone())
+            .map_err(|error| ClaimError::serialization(error.to_string()))?;
+        prepared.push((row_id, candidate.row_id, tenant_id, event, attempts, token));
     }
 
     let mut claimed = Vec::with_capacity(prepared.len());
-    for (row_id, event_row_id, event, attempts, token) in prepared {
+    for (row_id, event_row_id, tenant_id, event, attempts, token) in prepared {
         let expiry = match query_scalar::<_, String>(
-            "UPDATE dovecote_deliveries SET state = 'claimed', attempts = ?, claim_token = ?, claimed_by = ?, claim_expires_at = strftime('%Y-%m-%dT%H:%M:%f000Z', ?, printf('+%lld.%03lld seconds', ? / 1000, ? % 1000)) WHERE event_row_id = ? AND (state = 'pending' OR state = 'claimed') RETURNING claim_expires_at",
+            "UPDATE dovecote_deliveries SET state = 'claimed', attempts = ?, claim_token = ?, claimed_by = ?, claim_expires_at = strftime('%Y-%m-%dT%H:%M:%f000Z', ?, printf('+%lld.%03lld seconds', ? / 1000, ? % 1000)) WHERE tenant_id = ? AND event_row_id = ? AND (state = 'pending' OR state = 'claimed') RETURNING claim_expires_at",
         )
         .bind(attempts.get()).bind(token.as_slice()).bind(worker.as_str())
-        .bind(&operation_time).bind(lease_ms).bind(lease_ms).bind(event_row_id)
+        .bind(&operation_time).bind(lease_ms).bind(lease_ms).bind(tenant_id.as_str()).bind(event_row_id)
         .fetch_optional(&mut *transaction).await {
             Ok(Some(value)) => value,
             Ok(None) => {
@@ -190,6 +241,7 @@ async fn claim_once(
             }
         };
         let claimed_event = match ClaimedEvent::new(
+            tenant_id,
             row_id,
             event,
             attempts,
@@ -223,302 +275,12 @@ async fn rollback_claim<T>(
     Err(error)
 }
 
-pub async fn renew(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    lease_for: Lease,
-) -> Result<(), MutationError> {
-    renew_with_config(pool, row_id, claim_token, lease_for, BusyConfig::default()).await
-}
-pub(crate) async fn renew_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    lease_for: Lease,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    mutate_with_config(
-        pool,
-        row_id,
-        claim_token,
-        Mutation::Renew { lease_for },
-        busy,
-    )
-    .await
-}
-pub async fn ack(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-) -> Result<(), MutationError> {
-    ack_with_config(pool, row_id, claim_token, BusyConfig::default()).await
-}
-pub(crate) async fn ack_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    mutate_with_config(pool, row_id, claim_token, Mutation::Ack, busy).await
-}
-pub async fn retry(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    failure: &Failure,
-    backoff: Delay,
-) -> Result<(), MutationError> {
-    retry_with_config(
-        pool,
-        row_id,
-        claim_token,
-        failure,
-        backoff,
-        BusyConfig::default(),
-    )
-    .await
-}
-pub(crate) async fn retry_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    failure: &Failure,
-    backoff: Delay,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    mutate_with_config(
-        pool,
-        row_id,
-        claim_token,
-        Mutation::Retry { failure, backoff },
-        busy,
-    )
-    .await
-}
-pub async fn release(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    delay: Delay,
-) -> Result<(), MutationError> {
-    release_with_config(pool, row_id, claim_token, delay, BusyConfig::default()).await
-}
-pub(crate) async fn release_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    delay: Delay,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    mutate_with_config(pool, row_id, claim_token, Mutation::Release { delay }, busy).await
-}
-pub async fn quarantine(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    reason: &QuarantineReason,
-) -> Result<(), MutationError> {
-    quarantine_with_config(pool, row_id, claim_token, reason, BusyConfig::default()).await
-}
-pub(crate) async fn quarantine_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    reason: &QuarantineReason,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    mutate_with_config(
-        pool,
-        row_id,
-        claim_token,
-        Mutation::Quarantine { reason },
-        busy,
-    )
-    .await
-}
-
-async fn mutate_with_config(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    mutation: Mutation<'_>,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    validate_busy_config(busy).map_err(|detail| MutationError::Configuration { detail })?;
-    let mut tries = 0;
-    loop {
-        match mutate_once(pool, row_id, claim_token, mutation, busy).await {
-            Err(error) if error.is_busy() && tries < busy.retries() => {
-                tries += 1;
-                continue;
-            }
-            Err(error) if error.is_busy() => return Err(error.into_busy_exhausted()),
-            result => return result,
-        }
-    }
-}
-
-async fn mutate_once(
-    pool: &SqlitePool,
-    row_id: RowId,
-    claim_token: &ClaimToken,
-    mutation: Mutation<'_>,
-    busy: BusyConfig,
-) -> Result<(), MutationError> {
-    let (duration_ms, failure_code, failure_detail, quarantine_reason) = match mutation {
-        Mutation::Renew { lease_for } => (
-            Some(checked_milliseconds(lease_for.get()).map_err(MutationError::serialization)?),
-            None,
-            None,
-            None,
-        ),
-        Mutation::Ack => (None, None, None, None),
-        Mutation::Retry { failure, backoff } => (
-            Some(checked_milliseconds(backoff.get()).map_err(MutationError::serialization)?),
-            Some(failure.code()),
-            Some(failure.detail()),
-            None,
-        ),
-        Mutation::Release { delay } => (
-            Some(checked_milliseconds(delay.get()).map_err(MutationError::serialization)?),
-            None,
-            None,
-            None,
-        ),
-        Mutation::Quarantine { reason } => (None, None, None, Some(reason.as_str())),
-    };
-
-    let mut transaction = begin_immediate(pool, busy, "mutation")
-        .await
-        .map_err(|source| MutationError::sql("begin immediate mutation transaction", source))?;
-    let operation_time = match database_time(&mut transaction).await {
-        Ok(value) => value,
-        Err(source) => {
-            return rollback_mutation(
-                transaction,
-                MutationError::sql("read mutation operation time", source),
-            )
-            .await;
-        }
-    };
-    let changed = match match mutation {
-        Mutation::Renew { .. } => query("UPDATE dovecote_deliveries SET claim_expires_at = strftime('%Y-%m-%dT%H:%M:%f000Z', ?, printf('+%lld.%03lld seconds', ? / 1000, ? % 1000)) WHERE event_row_id = ? AND state = 'claimed' AND claim_token = ? AND claim_expires_at > ?")
-            .bind(&operation_time).bind(duration_ms.expect("renew duration")).bind(duration_ms.expect("renew duration")).bind(row_id.get()).bind(claim_token.as_bytes().as_slice()).bind(&operation_time)
-            .execute(&mut *transaction).await,
-        Mutation::Ack => query("UPDATE dovecote_deliveries SET state = 'delivered', claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL, delivered_at = ? WHERE event_row_id = ? AND state = 'claimed' AND claim_token = ? AND claim_expires_at > ?")
-            .bind(&operation_time).bind(row_id.get()).bind(claim_token.as_bytes().as_slice()).bind(&operation_time)
-            .execute(&mut *transaction).await,
-        Mutation::Retry { .. } => query("UPDATE dovecote_deliveries SET state = 'pending', available_at = strftime('%Y-%m-%dT%H:%M:%f000Z', ?, printf('+%lld.%03lld seconds', ? / 1000, ? % 1000)), claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL, last_failure_code = ?, last_failure_detail = ? WHERE event_row_id = ? AND state = 'claimed' AND claim_token = ? AND claim_expires_at > ?")
-            .bind(&operation_time).bind(duration_ms.expect("retry duration")).bind(duration_ms.expect("retry duration")).bind(failure_code.expect("retry code")).bind(failure_detail.expect("retry detail")).bind(row_id.get()).bind(claim_token.as_bytes().as_slice()).bind(&operation_time)
-            .execute(&mut *transaction).await,
-        Mutation::Release { .. } => query("UPDATE dovecote_deliveries SET state = 'pending', available_at = strftime('%Y-%m-%dT%H:%M:%f000Z', ?, printf('+%lld.%03lld seconds', ? / 1000, ? % 1000)), claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL WHERE event_row_id = ? AND state = 'claimed' AND claim_token = ? AND claim_expires_at > ?")
-            .bind(&operation_time).bind(duration_ms.expect("release duration")).bind(duration_ms.expect("release duration")).bind(row_id.get()).bind(claim_token.as_bytes().as_slice()).bind(&operation_time)
-            .execute(&mut *transaction).await,
-        Mutation::Quarantine { .. } => query("UPDATE dovecote_deliveries SET state = 'quarantined', claim_token = NULL, claimed_by = NULL, claim_expires_at = NULL, quarantined_at = ?, quarantine_reason = ? WHERE event_row_id = ? AND state = 'claimed' AND claim_token = ? AND claim_expires_at > ?")
-            .bind(&operation_time).bind(quarantine_reason.expect("quarantine reason")).bind(row_id.get()).bind(claim_token.as_bytes().as_slice()).bind(&operation_time)
-            .execute(&mut *transaction).await,
-    } {
-        Ok(value) => value,
-        Err(source) => {
-            return rollback_mutation(
-                transaction,
-                MutationError::sql("execute conditional delivery mutation", source),
-            )
-            .await;
-        }
-    };
-
-    if changed.rows_affected() != 1 {
-        let delivery = match query_as::<_, DeliveryForMutation>("SELECT state, claim_token, claim_expires_at FROM dovecote_deliveries WHERE event_row_id = ?")
-            .bind(row_id.get()).fetch_optional(&mut *transaction).await
-        {
-            Ok(Some(value)) => value,
-            Ok(None) => return rollback_mutation(transaction, MutationError::NotFound).await,
-            Err(source) => {
-                return rollback_mutation(
-                    transaction,
-                    MutationError::sql("classify delivery mutation", source),
-                )
-                .await;
-            }
-        };
-        if let Err(error) = classify_delivery(&delivery, claim_token, &operation_time) {
-            return rollback_mutation(transaction, error).await;
-        }
-
-        return rollback_mutation(
-            transaction,
-            MutationError::sql(
-                "conditional delivery mutation",
-                sqlx::Error::Protocol("claimed delivery did not satisfy mutation".to_owned()),
-            ),
-        )
-        .await;
-    }
-
-    commit_transaction(transaction)
-        .await
-        .map_err(|source| MutationError::sql("commit mutation transaction", source))
-}
-
-async fn rollback_mutation<T>(
-    transaction: Transaction<'static, Sqlite>,
-    error: MutationError,
-) -> Result<T, MutationError> {
-    let _ = transaction.rollback().await;
-    Err(error)
-}
-
-async fn database_time(transaction: &mut Transaction<'_, Sqlite>) -> Result<String, sqlx::Error> {
+pub(crate) async fn database_time(
+    transaction: &mut Transaction<'_, Sqlite>,
+) -> Result<String, sqlx::Error> {
     query_scalar("SELECT strftime('%Y-%m-%dT%H:%M:%f000Z', 'now')")
         .fetch_one(&mut **transaction)
         .await
-}
-
-fn classify_delivery(
-    delivery: &DeliveryForMutation,
-    token: &ClaimToken,
-    operation_time: &str,
-) -> Result<(), MutationError> {
-    let state = parse_state(&delivery.state)?;
-    if state != DeliveryState::Claimed {
-        return Err(MutationError::IllegalTransition { state });
-    }
-
-    let stored = delivery
-        .claim_token
-        .as_deref()
-        .ok_or_else(|| MutationError::serialization("claimed delivery has no claim token"))?;
-    if stored.len() != 16 {
-        return Err(MutationError::serialization(
-            "claimed delivery has an invalid claim token width",
-        ));
-    }
-
-    let expiry = delivery
-        .claim_expires_at
-        .as_deref()
-        .ok_or_else(|| MutationError::serialization("claimed delivery has no claim expiry"))?;
-    let expiry = parse_timestamp(expiry).map_err(MutationError::serialization)?;
-    let operation_time = parse_timestamp(operation_time).map_err(MutationError::serialization)?;
-    if stored != token.as_bytes() || expiry <= operation_time {
-        return Err(MutationError::LostClaim);
-    }
-
-    Ok(())
-}
-
-fn parse_state(value: &str) -> Result<DeliveryState, MutationError> {
-    match value {
-        "pending" => Ok(DeliveryState::Pending),
-        "claimed" => Ok(DeliveryState::Claimed),
-        "delivered" => Ok(DeliveryState::Delivered),
-        "quarantined" => Ok(DeliveryState::Quarantined),
-        _ => Err(MutationError::serialization(format!(
-            "unknown delivery state {value:?}"
-        ))),
-    }
 }
 
 fn fresh_token(
@@ -547,38 +309,16 @@ impl EntropySource for OsEntropy {
     }
 }
 
-#[derive(Debug, FromRow)]
-struct DeliveryForMutation {
-    state: String,
-    claim_token: Option<Vec<u8>>,
-    claim_expires_at: Option<String>,
-}
-
-#[derive(Clone, Copy)]
-enum Mutation<'a> {
-    Renew {
-        lease_for: Lease,
-    },
-    Ack,
-    Retry {
-        failure: &'a Failure,
-        backoff: Delay,
-    },
-    Release {
-        delay: Delay,
-    },
-    Quarantine {
-        reason: &'a QuarantineReason,
-    },
-}
-
-const CLAIM_SQL: &str = "SELECT e.row_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_deliveries AS d JOIN dovecote_events AS e ON e.row_id = d.event_row_id WHERE (d.state = 'pending' AND d.available_at <= ?) OR (d.state = 'claimed' AND d.claim_expires_at <= ?) ORDER BY d.event_row_id ASC LIMIT ?";
+const CLAIM_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_deliveries AS d JOIN dovecote_events AS e ON e.tenant_id = d.tenant_id AND e.row_id = d.event_row_id WHERE (d.state = 'pending' AND d.available_at <= ?) OR (d.state = 'claimed' AND d.claim_expires_at <= ?) ORDER BY d.event_row_id ASC LIMIT ?";
+const SCOPED_CLAIM_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_deliveries AS d JOIN dovecote_events AS e ON e.tenant_id = d.tenant_id AND e.row_id = d.event_row_id WHERE e.tenant_id = ? AND ((d.state = 'pending' AND d.available_at <= ?) OR (d.state = 'claimed' AND d.claim_expires_at <= ?)) ORDER BY d.event_row_id ASC LIMIT ?";
 
 #[cfg(test)]
 mod tests {
     use super::{EntropySource, claim_with_config, claim_with_entropy, fresh_token};
-    use crate::{MIGRATIONS, SqliteDovecote, check_schema, enqueue};
-    use dovecote::{EventId, EventSource, EventType, Limit, NewEvent, StreamName, WorkerId};
+    use crate::{MIGRATIONS, SqliteDovecote, check_schema, enqueue::enqueue_for_scope};
+    use dovecote::{
+        EventId, EventSource, EventType, Limit, NewEvent, StreamName, TenantId, WorkerId,
+    };
     use sqlx::{SqlitePool, raw_sql, sqlite::SqlitePoolOptions};
     use std::error::Error;
     use std::sync::atomic::AtomicBool;
@@ -627,8 +367,9 @@ mod tests {
         let pool = test_pool().await?;
         let adapter = SqliteDovecote::new(pool.clone());
         let mut transaction = adapter.begin_write().await?;
-        enqueue(&mut transaction, test_event("entropy-first")).await?;
-        enqueue(&mut transaction, test_event("entropy-second")).await?;
+        let tenant = TenantId::new("test")?;
+        enqueue_for_scope(&mut transaction, &tenant, test_event("entropy-first")).await?;
+        enqueue_for_scope(&mut transaction, &tenant, test_event("entropy-second")).await?;
         transaction.commit().await?;
 
         let mut entropy = FailsEntropy;
@@ -664,8 +405,9 @@ mod tests {
         let pool = test_pool().await?;
         let adapter = SqliteDovecote::new(pool.clone());
         let mut transaction = adapter.begin_write().await?;
-        enqueue(&mut transaction, test_event("failpoint-first")).await?;
-        enqueue(&mut transaction, test_event("failpoint-second")).await?;
+        let tenant = TenantId::new("test")?;
+        enqueue_for_scope(&mut transaction, &tenant, test_event("failpoint-first")).await?;
+        enqueue_for_scope(&mut transaction, &tenant, test_event("failpoint-second")).await?;
         transaction.commit().await?;
 
         let before = sqlx::query_as::<_, (String, i64, Option<Vec<u8>>, Option<String>, Option<String>)>(

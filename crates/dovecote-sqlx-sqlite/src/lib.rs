@@ -3,33 +3,33 @@
 //! SQLite's single-writer model is a distinct support contract. Write and
 //! claim transactions therefore use explicit `BEGIN IMMEDIATE`; busy errors
 //! are retried only by the bounded policy configured on [`SqliteDovecote`].
+#![warn(missing_docs)]
 
+mod delivery_state;
 mod enqueue;
 mod error;
 mod finalize;
 mod hydrate;
 mod import;
 mod lifecycle;
+mod lifecycle_mutation;
 mod migration;
 mod page;
 mod schema;
+mod scope;
 
-pub use enqueue::enqueue;
 pub use error::{
     ClaimError, EnqueueError, FinalizeError, ImportError, MutationError, PageError, SchemaError,
     TransientKind,
 };
-pub use finalize::finalize_pending_delivery_for_migration;
-pub use import::import_for_migration;
-pub use lifecycle::{ack, claim, quarantine, release, renew, retry};
 pub use migration::{
-    CrateVersion, MIGRATIONS, Migration, MigrationCompatibility, MigrationCompatibilityError,
-    SCHEMA_VERSION,
+    CrateVersion, LEGACY_MIGRATION, MIGRATIONS, Migration, MigrationCompatibility,
+    MigrationCompatibilityError, SCHEMA_VERSION, V1_TENANT_ACTIVATE_SQL, V1_TENANT_PREPARE_SQL,
 };
-pub use page::{SnapshotPager, begin_snapshot, page};
+pub use page::SnapshotPager;
 pub use schema::check_schema;
+pub use scope::{AdminDovecote, TenantDovecote};
 
-use dovecote::{EnqueueOutcome, FinalizeOutcome, ImportOutcome, ImportedDeliveryState, NewEvent};
 use sqlx::{AssertSqlSafe, SqlSafeStr, Sqlite, SqlitePool, Transaction, query, query_scalar};
 use std::time::Duration;
 
@@ -39,7 +39,7 @@ pub const DEFAULT_BUSY_RETRIES: u32 = 3;
 pub const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Begins a caller write transaction using the default busy policy. The
-/// returned transaction is safe to pass to [`enqueue`].
+/// returned transaction is safe to pass to [`TenantDovecote::enqueue`].
 pub async fn begin_write(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
     begin_write_with_config(pool, BusyConfig::default()).await
 }
@@ -109,10 +109,12 @@ impl SqliteDovecote {
         Self { pool, busy }
     }
 
+    /// Borrows the pool used by this adapter.
     pub fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
+    /// Returns the bounded busy policy used by adapter operations.
     pub const fn busy_config(&self) -> BusyConfig {
         self.busy
     }
@@ -124,112 +126,24 @@ impl SqliteDovecote {
     }
 
     /// Alias emphasizing that the returned transaction is suitable for
-    /// [`Self::enqueue`].
+    /// [`TenantDovecote::enqueue`].
     pub async fn begin_enqueue(&self) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
         self.begin_write().await
     }
 
-    pub async fn enqueue<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Sqlite>,
-        event: NewEvent,
-    ) -> Result<EnqueueOutcome, EnqueueError> {
-        enqueue(transaction, event).await
+    /// Creates an ordinary handle restricted to one validated tenant.
+    pub fn for_tenant(&self, tenant_id: dovecote::TenantId) -> TenantDovecote {
+        TenantDovecote::new(self.pool.clone(), tenant_id, self.busy)
     }
 
-    /// Imports one already-validated event and its legacy delivery state in
-    /// the caller-owned transaction. This is migration infrastructure, not a
-    /// replacement for [`Self::enqueue`].
-    pub async fn import_for_migration<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Sqlite>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, ImportError> {
-        import_for_migration(transaction, event, state).await
+    /// Creates the explicit administrative handle for all-tenant reads and named writes.
+    pub fn admin(&self) -> AdminDovecote {
+        AdminDovecote::new(self.pool.clone(), self.busy)
     }
 
-    /// Records the legacy publisher's authoritative delivery time for a
-    /// canonical pending migration import. This operation is migration
-    /// infrastructure, not an ordinary acknowledgement shortcut.
-    pub async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Sqlite>,
-        row_id: dovecote::RowId,
-        delivered_at: time::OffsetDateTime,
-    ) -> Result<FinalizeOutcome, FinalizeError> {
-        finalize_pending_delivery_for_migration(transaction, row_id, delivered_at).await
-    }
-
+    /// Verifies that the pool's current SQLite schema satisfies Dovecote.
     pub async fn check_schema(&self) -> Result<(), SchemaError> {
         check_schema(&self.pool).await
-    }
-
-    pub async fn page(
-        &self,
-        after_row_id: Option<dovecote::RowId>,
-        limit: dovecote::Limit,
-    ) -> Result<Vec<dovecote::PagedEvent>, PageError> {
-        page(&self.pool, after_row_id, limit).await
-    }
-
-    pub async fn begin_snapshot(&self) -> Result<SnapshotPager, PageError> {
-        begin_snapshot(&self.pool).await
-    }
-
-    pub async fn claim(
-        &self,
-        worker: dovecote::WorkerId,
-        lease_for: dovecote::Lease,
-        limit: dovecote::Limit,
-    ) -> Result<Vec<dovecote::ClaimedEvent>, ClaimError> {
-        lifecycle::claim_with_config(&self.pool, worker, lease_for, limit, self.busy).await
-    }
-
-    pub async fn renew(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        lease_for: dovecote::Lease,
-    ) -> Result<(), MutationError> {
-        lifecycle::renew_with_config(&self.pool, row_id, claim_token, lease_for, self.busy).await
-    }
-
-    pub async fn ack(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-    ) -> Result<(), MutationError> {
-        lifecycle::ack_with_config(&self.pool, row_id, claim_token, self.busy).await
-    }
-
-    pub async fn retry(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        failure: &dovecote::Failure,
-        backoff: dovecote::Delay,
-    ) -> Result<(), MutationError> {
-        lifecycle::retry_with_config(&self.pool, row_id, claim_token, failure, backoff, self.busy)
-            .await
-    }
-
-    pub async fn release(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        delay: dovecote::Delay,
-    ) -> Result<(), MutationError> {
-        lifecycle::release_with_config(&self.pool, row_id, claim_token, delay, self.busy).await
-    }
-
-    pub async fn quarantine(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        reason: &dovecote::QuarantineReason,
-    ) -> Result<(), MutationError> {
-        lifecycle::quarantine_with_config(&self.pool, row_id, claim_token, reason, self.busy).await
     }
 }
 

@@ -16,7 +16,11 @@ pub(crate) fn validate_string(
     maximum_bytes: Option<usize>,
     allow_empty: bool,
 ) -> Result<(), ValidationError> {
-    if (!allow_empty && value.is_empty()) || maximum_bytes.is_some_and(|max| value.len() > max) {
+    if !allow_empty && value.is_empty() {
+        return Err(ValidationError::new(field, ValidationKind::Empty));
+    }
+
+    if maximum_bytes.is_some_and(|max| value.len() > max) {
         return Err(ValidationError::new(field, ValidationKind::Length));
     }
 

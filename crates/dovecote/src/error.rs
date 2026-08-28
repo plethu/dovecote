@@ -6,18 +6,31 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ValidationKind {
+    /// The value was required to be non-empty.
     Empty,
+    /// The value exceeded a byte or structural length bound.
     Length,
+    /// The value contains a forbidden character.
     Characters,
+    /// The value has invalid syntax.
     Syntax,
+    /// The value is not a valid media type.
     MediaType,
+    /// The value is not valid JSON text.
     Json,
+    /// A combination of otherwise valid values is not permitted.
     Combination,
+    /// A numeric value is outside its supported range.
     Range,
+    /// A value has unsupported precision.
     Precision,
+    /// A name is reserved by the event format.
     ReservedName,
+    /// An item is already present where uniqueness is required.
     Duplicate,
+    /// A trace-context value does not satisfy its grammar.
     TraceContext,
+    /// The event exceeds its configured logical size limit.
     Size,
 }
 
@@ -70,10 +83,15 @@ impl fmt::Display for ValidationKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum ValidationOperation {
+    /// Validation of an event or its immutable content.
     Event,
+    /// Validation of a claim or page limit.
     Limit,
+    /// Validation of a lease, delay, or backoff duration.
     Duration,
+    /// Validation of a worker, failure, or quarantine field.
     OperationalField,
+    /// Validation of a state or timestamp representation.
     State,
 }
 

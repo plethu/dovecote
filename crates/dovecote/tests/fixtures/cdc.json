@@ -6,6 +6,7 @@
       "operation": "c",
       "row": {
         "row_id": 41,
+        "tenant_id": "tenant-a",
         "event_id": "cdc-json",
         "event_type": "com.example.audit",
         "stream": "audit.v1",
@@ -44,6 +45,7 @@
           "dovecote_enqueued_at": "2026-01-01T00:00:00.123456Z",
           "dovecote_extensions": "{\"xextra\":{\"type\":\"string\",\"value\":\"opaque\"}}",
           "dovecote_row_id": "41",
+          "dovecote_tenant_id": "tenant-a",
           "payload": "eyJiIjoyLCJhIjoiY2Fmw6kifQ=="
         }
       },
@@ -63,6 +65,7 @@
       "operation": "c",
       "row": {
         "row_id": 42,
+        "tenant_id": "tenant-a",
         "event_id": "cdc-bin",
         "event_type": "com.example.binary",
         "stream": "audit.v1",
@@ -101,6 +104,7 @@
           "dovecote_enqueued_at": "2026-01-01T00:00:00.654321Z",
           "dovecote_extensions": "{}",
           "dovecote_row_id": "42",
+          "dovecote_tenant_id": "tenant-a",
           "payload": "AAH/"
         }
       },
@@ -120,6 +124,7 @@
       "operation": "c",
       "row": {
         "row_id": 43,
+        "tenant_id": "tenant-a",
         "event_id": "cdc-none",
         "event_type": "com.example.empty",
         "stream": "audit.v1",
@@ -158,6 +163,7 @@
           "dovecote_enqueued_at": "2026-01-01T00:00:00.999999Z",
           "dovecote_extensions": "{}",
           "dovecote_row_id": "43",
+          "dovecote_tenant_id": "tenant-a",
           "payload": null
         }
       },

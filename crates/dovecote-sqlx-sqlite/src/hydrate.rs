@@ -3,12 +3,13 @@
 use crate::enqueue::parse_timestamp;
 use dovecote::{
     AttemptCount, DeliverySnapshot, EventData, EventSizeLimit, Failure, NewEvent, PagedEvent,
-    QuarantineReason, RowId, StoredEvent, WorkerId,
+    QuarantineReason, RowId, StoredEvent, TenantId, WorkerId,
 };
 
 #[derive(Debug, sqlx::FromRow)]
 pub(crate) struct DurableRow {
     pub(crate) row_id: i64,
+    pub(crate) tenant_id: String,
     pub(crate) stream: String,
     pub(crate) specversion: String,
     pub(crate) event_id: String,
@@ -99,6 +100,7 @@ pub(crate) fn hydrate_event(row: &DurableRow) -> Result<StoredEvent, String> {
 }
 
 pub(crate) fn hydrate_page(row: DurableRow) -> Result<PagedEvent, String> {
+    let tenant_id = TenantId::new(row.tenant_id.clone()).map_err(|error| error.to_string())?;
     let row_id = RowId::new(row.row_id).map_err(|error| error.to_string())?;
     let event = hydrate_event(&row)?;
     let state = row
@@ -175,8 +177,14 @@ pub(crate) fn hydrate_page(row: DurableRow) -> Result<PagedEvent, String> {
         state => return Err(format!("unknown delivery state {state:?}")),
     }
     .map_err(|error| error.to_string())?;
-    PagedEvent::new(row_id, event, parse_timestamp(&row.enqueued_at)?, delivery)
-        .map_err(|error| error.to_string())
+    PagedEvent::new(
+        tenant_id,
+        row_id,
+        event,
+        parse_timestamp(&row.enqueued_at)?,
+        delivery,
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn require_absent<T>(field: &str, value: Option<&T>) -> Result<(), String> {

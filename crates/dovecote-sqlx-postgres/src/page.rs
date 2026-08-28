@@ -5,31 +5,62 @@
 //! row-ID allocation and commit order.  [`SnapshotPager`] keeps one read-only
 //! repeatable-read transaction for a finite export instead.
 
-use crate::error::PageError;
+use crate::{
+    error::PageError,
+    hydrate::{EventRow, hydrate_event},
+    rls,
+};
 use dovecote::{
-    AttemptCount, DeliverySnapshot, EventData, EventSizeLimit, Failure, Limit, NewEvent,
-    PagedEvent, QuarantineReason, RowId, StoredEvent, WorkerId,
+    AttemptCount, DeliverySnapshot, Failure, Limit, PagedEvent, QuarantineReason, RowId, TenantId,
+    WorkerId,
 };
 use sqlx::{FromRow, PgConnection, PgPool, Postgres, Transaction, query_as, query_scalar};
 use std::marker::PhantomData;
 use time::OffsetDateTime;
 
-/// Reads a bounded live page after `after_row_id`.
-///
-/// This operation does not lock or mutate delivery rows.  `None` starts before
-/// the first event.  Separate calls do not share a snapshot, so a caller that
-/// requires finite completeness should use [`begin_snapshot`] instead.
-pub async fn page(
+pub(crate) async fn page_for_scope(
     pool: &PgPool,
+    tenant_id: Option<&TenantId>,
     after_row_id: Option<RowId>,
     limit: Limit,
 ) -> Result<Vec<PagedEvent>, PageError> {
+    if let Some(tenant_id) = tenant_id {
+        let mut transaction = pool
+            .begin()
+            .await
+            .map_err(|source| PageError::sql("begin scoped live page transaction", source))?;
+        rls::bind_tenant(&mut transaction, tenant_id)
+            .await
+            .map_err(|source| PageError::sql("bind live page tenant", source))?;
+        let result = query_page_on_connection(
+            &mut transaction,
+            Some(tenant_id),
+            after_row_id.map_or(0, RowId::get),
+            None,
+            limit,
+        )
+        .await;
+        return match result {
+            Ok(rows) => {
+                transaction.commit().await.map_err(|source| {
+                    PageError::sql("finish scoped live page transaction", source)
+                })?;
+                Ok(rows)
+            }
+            Err(error) => {
+                let _ = transaction.rollback().await;
+                Err(error)
+            }
+        };
+    }
+
     let mut connection = pool
         .acquire()
         .await
         .map_err(|source| PageError::sql("acquire live page connection", source))?;
     query_page_on_connection(
         &mut connection,
+        tenant_id,
         after_row_id.map_or(0, RowId::get),
         None,
         limit,
@@ -37,31 +68,38 @@ pub async fn page(
     .await
 }
 
-/// Starts a finite PostgreSQL snapshot pager.
-///
-/// The transaction is acquired from `pool`, explicitly started as
-/// `REPEATABLE READ READ ONLY`, and retained by the returned pager until
-/// [`SnapshotPager::finish`], [`SnapshotPager::rollback`], or drop.
-pub async fn begin_snapshot(pool: &PgPool) -> Result<SnapshotPager, PageError> {
+pub(crate) async fn begin_snapshot_for_scope(
+    pool: &PgPool,
+    tenant_id: Option<&TenantId>,
+) -> Result<SnapshotPager, PageError> {
     let mut transaction = pool
         .begin_with(sqlx::AssertSqlSafe(
             "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY",
         ))
         .await
         .map_err(|source| PageError::sql("begin snapshot transaction", source))?;
+    if let Some(tenant_id) = tenant_id {
+        rls::bind_tenant(&mut transaction, tenant_id)
+            .await
+            .map_err(|source| PageError::sql("bind snapshot tenant", source))?;
+    }
 
-    let upper_bound = query_scalar::<_, Option<i64>>("SELECT MAX(row_id) FROM dovecote_events")
-        .fetch_one(&mut *transaction)
-        .await
-        .map_err(|source| PageError::sql("read snapshot upper row ID", source))?
-        .map(|value| RowId::new(value).map_err(|error| PageError::serialization(error.to_string())))
-        .transpose()?;
+    let upper_bound = query_scalar::<_, Option<i64>>(
+        "SELECT MAX(row_id) FROM dovecote_events WHERE ($1::varchar IS NULL OR tenant_id = $1)",
+    )
+    .bind(tenant_id.map(TenantId::as_str))
+    .fetch_one(&mut *transaction)
+    .await
+    .map_err(|source| PageError::sql("read snapshot upper row ID", source))?
+    .map(|value| RowId::new(value).map_err(|error| PageError::serialization(error.to_string())))
+    .transpose()?;
 
     Ok(SnapshotPager {
         transaction,
         upper_bound,
         cursor: None,
         exhausted: upper_bound.is_none(),
+        tenant_id: tenant_id.cloned(),
         _not_send: PhantomData,
     })
 }
@@ -90,6 +128,7 @@ pub struct SnapshotPager {
     upper_bound: Option<RowId>,
     cursor: Option<RowId>,
     exhausted: bool,
+    tenant_id: Option<TenantId>,
     _not_send: PhantomData<*mut ()>,
 }
 
@@ -125,6 +164,7 @@ impl SnapshotPager {
             .expect("a non-exhausted pager has an upper bound");
         let rows = query_page_on_connection(
             &mut self.transaction,
+            self.tenant_id.as_ref(),
             self.cursor.map_or(0, RowId::get),
             Some(upper_bound.get()),
             limit,
@@ -167,6 +207,7 @@ impl SnapshotPager {
 /// Executes a page query on the dedicated connection held by the caller.
 async fn query_page_on_connection(
     connection: &mut PgConnection,
+    tenant_id: Option<&TenantId>,
     after_row_id: i64,
     upper_bound: Option<i64>,
     limit: Limit,
@@ -174,6 +215,7 @@ async fn query_page_on_connection(
     let rows = match upper_bound {
         Some(upper_bound) => {
             query_as::<_, PageRow>(SNAPSHOT_PAGE_SQL)
+                .bind(tenant_id.map(TenantId::as_str))
                 .bind(after_row_id)
                 .bind(i64::from(limit.get()))
                 .bind(upper_bound)
@@ -182,6 +224,7 @@ async fn query_page_on_connection(
         }
         None => {
             query_as::<_, PageRow>(PAGE_SQL)
+                .bind(tenant_id.map(TenantId::as_str))
                 .bind(after_row_id)
                 .bind(i64::from(limit.get()))
                 .fetch_all(&mut *connection)
@@ -201,6 +244,7 @@ async fn query_page_on_connection(
 // and ordering semantics.
 const PAGE_SQL: &str = r#"
     SELECT e.row_id,
+           e.tenant_id,
            e.stream,
            e.specversion,
            e.event_id,
@@ -227,14 +271,16 @@ const PAGE_SQL: &str = r#"
            d.quarantined_at,
            d.quarantine_reason
     FROM dovecote_events AS e
-    LEFT JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
-    WHERE e.row_id > $1
+    LEFT JOIN dovecote_deliveries AS d
+      ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id
+    WHERE ($1::varchar IS NULL OR e.tenant_id = $1) AND e.row_id > $2
     ORDER BY e.row_id ASC
-    LIMIT $2
+    LIMIT $3
 "#;
 
 const SNAPSHOT_PAGE_SQL: &str = r#"
     SELECT e.row_id,
+           e.tenant_id,
            e.stream,
            e.specversion,
            e.event_id,
@@ -261,15 +307,17 @@ const SNAPSHOT_PAGE_SQL: &str = r#"
            d.quarantined_at,
            d.quarantine_reason
     FROM dovecote_events AS e
-    LEFT JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id
-    WHERE e.row_id > $1 AND e.row_id <= $3
+    LEFT JOIN dovecote_deliveries AS d
+      ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id
+    WHERE ($1::varchar IS NULL OR e.tenant_id = $1) AND e.row_id > $2 AND e.row_id <= $4
     ORDER BY e.row_id ASC
-    LIMIT $2
+    LIMIT $3
 "#;
 
 #[derive(Debug, FromRow)]
 struct PageRow {
     row_id: i64,
+    tenant_id: String,
     stream: String,
     specversion: String,
     event_id: String,
@@ -297,9 +345,30 @@ struct PageRow {
     quarantine_reason: Option<String>,
 }
 
+impl PageRow {
+    fn event_row(&self) -> EventRow {
+        EventRow {
+            stream: self.stream.clone(),
+            specversion: self.specversion.clone(),
+            event_id: self.event_id.clone(),
+            source: self.source.clone(),
+            event_type: self.event_type.clone(),
+            subject: self.subject.clone(),
+            occurred_at: self.occurred_at,
+            datacontenttype: self.datacontenttype.clone(),
+            dataschema: self.dataschema.clone(),
+            partitionkey: self.partitionkey.clone(),
+            extensions: self.extensions.clone(),
+            data_kind: self.data_kind.clone(),
+            data: self.data.clone(),
+        }
+    }
+}
+
 fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
     let row_id = RowId::new(row.row_id).map_err(|error| error.to_string())?;
-    let event = hydrate_event(&row)?;
+    let tenant_id = TenantId::new(row.tenant_id.clone()).map_err(|error| error.to_string())?;
+    let event = hydrate_event(&row.event_row())?;
     let state = row
         .state
         .ok_or_else(|| format!("event row {} has no required delivery row", row.row_id))?;
@@ -378,7 +447,8 @@ fn hydrate_page(row: PageRow) -> Result<PagedEvent, String> {
     }
     .map_err(|error| error.to_string())?;
 
-    PagedEvent::new(row_id, event, row.enqueued_at, delivery).map_err(|error| error.to_string())
+    PagedEvent::new(tenant_id, row_id, event, row.enqueued_at, delivery)
+        .map_err(|error| error.to_string())
 }
 
 fn require_absent<T>(field: &str, value: Option<&T>) -> Result<(), String> {
@@ -408,68 +478,4 @@ fn parse_failure(code: Option<String>, detail: Option<String>) -> Result<Option<
             .map_err(|error| error.to_string()),
         _ => Err("delivery failure code and detail must be both NULL or non-NULL".to_owned()),
     }
-}
-
-fn hydrate_event(row: &PageRow) -> Result<StoredEvent, String> {
-    if row.specversion != dovecote::SPEC_VERSION {
-        return Err("stored event has an unsupported specversion".to_owned());
-    }
-
-    let stream =
-        dovecote::StreamName::new(row.stream.clone()).map_err(|error| error.to_string())?;
-    let id = dovecote::EventId::new(row.event_id.clone()).map_err(|error| error.to_string())?;
-    let source =
-        dovecote::EventSource::new(row.source.clone()).map_err(|error| error.to_string())?;
-    let event_type =
-        dovecote::EventType::new(row.event_type.clone()).map_err(|error| error.to_string())?;
-    let mut builder = NewEvent::builder(stream, id, source, event_type);
-    builder = match &row.subject {
-        Some(value) => builder.subject(
-            dovecote::EventSubject::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-    builder = match row.occurred_at {
-        Some(value) => builder.time(value),
-        None => builder,
-    };
-    builder = match &row.datacontenttype {
-        Some(value) => builder.datacontenttype(
-            dovecote::ContentType::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-    builder = match &row.dataschema {
-        Some(value) => builder.dataschema(
-            dovecote::SchemaUri::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-    builder = match &row.partitionkey {
-        Some(value) => builder.partitionkey(
-            dovecote::PartitionKey::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-    builder = builder.extensions(
-        dovecote::Extensions::from_canonical_json(&row.extensions)
-            .map_err(|error| error.to_string())?,
-    );
-    match (&row.data_kind, &row.data) {
-        (None, None) => {}
-        (Some(kind), Some(bytes)) if kind == "json" => {
-            builder =
-                builder.data(EventData::json(bytes.clone()).map_err(|error| error.to_string())?);
-        }
-        (Some(kind), Some(bytes)) if kind == "binary" => {
-            builder = builder.data(EventData::binary(bytes.clone()));
-        }
-        _ => return Err("stored data kind and data columns do not agree".to_owned()),
-    }
-
-    builder
-        .build_with_limit(EventSizeLimit::new(usize::MAX).expect("maximum size is non-zero"))
-        .map_err(|error| error.to_string())?
-        .into_stored()
-        .map_err(|error| error.to_string())
 }

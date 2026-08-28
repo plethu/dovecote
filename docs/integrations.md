@@ -3,20 +3,27 @@
 Dovecote produces validated CloudEvents projections and owns durable delivery
 state. An application integration owns destinations, authentication, transport
 timeouts, response classification, retries, and the decision to publish by a
-leased worker or by CDC. Choose one publication owner for each stream; do not
-run both paths at once. The exact wire rules are in [SPEC section 10](../SPEC.md#10-integration-mappings).
+leased worker or by CDC. Choose one publication owner for the complete Dovecote
+table set; the all-stream claim API does not support mixing modes per stream.
+Do not run both paths at once. The exact wire rules are in [SPEC section 10](../SPEC.md#10-integration-mappings).
 
 | Destination | Structured projection | Binary projection | Routing and duplicate identity |
 | --- | --- | --- | --- |
-| HTTP | `application/cloudevents+json` body | Exact data body; other context as `ce-<name>` headers | Application-owned URL and method; consumer uses `source + id`. |
+| HTTP | `application/cloudevents+json` body | Exact data body; other context as `ce-<name>` headers | Application-owned URL and method; a tenant-isolated consumer uses `source + id`. |
 | Kafka | JSON record value and `application/cloudevents+json` content-type header | Exact data value and `ce_<name>` headers | Application maps `stream` to a topic; optional `partitionkey` becomes the record key. |
-| NATS JetStream | CloudEvents NATS structured body | Exact data body and `ce-<name>` headers, including `ce-datacontenttype` | Application maps `stream` to a subject; `Nats-Msg-Id` may carry a deterministic hash of `source + id`. |
+| NATS JetStream | CloudEvents NATS structured body | Exact data body and `ce-<name>` headers, including `ce-datacontenttype` | Application maps `stream` to a subject; `Nats-Msg-Id` may carry a deterministic hash of the tenant routing domain plus `source + id`. |
 | Azure Event Grid | CloudEvents 1.0 HTTP publishing envelope | Not a separate Event Grid route in this profile | Application maps `stream` to a configured topic or domain route. |
 | Debezium Outbox Event Router | Downstream transform required | Downstream transform required to preserve exact bytes | Watches only `dovecote_events`; routes by `stream`; delivery mutations are not CDC events. |
 
 Every binding keeps the CloudEvents identity pair. A transport key, broker
-deduplication window, or database row ID is not a replacement for `source + id`.
-Absent data and present empty binary data remain different Dovecote values.
+deduplication window, or database row ID is not a replacement for `source + id`
+within one tenant. Absent data and present empty binary data remain different
+Dovecote values. Tenant IDs are storage metadata, not an implicit CloudEvents
+extension. A tenant-scoped worker receives the tenant from its claimed or paged
+state and must route it according to application policy. If multiple tenants
+share one destination, that policy must partition consumer deduplication by
+tenant as well as `(source, id)`; Dovecote deliberately does not add tenant
+context to the CloudEvents projection.
 
 ## HTTP
 
@@ -52,9 +59,11 @@ through application configuration and retain `partitionkey` as an extension
 even when it also informs subject or consumer routing.
 
 For JetStream duplicate suppression, the application may set `Nats-Msg-Id` to
-the lowercase hexadecimal SHA-256 of the unambiguous length-prefixed UTF-8
-sequence `source || event_id`. This is a transport aid with a finite duplicate
-window, not consumer idempotency or a Dovecote guarantee.
+the lowercase hexadecimal SHA-256 of an unambiguous length-prefixed UTF-8
+sequence containing the tenant routing domain, `source`, and `event_id` when
+destinations are shared. A tenant-isolated destination may hash `source ||
+event_id`. This is a transport aid with a finite duplicate window, not consumer
+idempotency or a Dovecote guarantee.
 
 ## Azure Event Grid
 

@@ -42,7 +42,7 @@ Dovecote guarantees:
 - atomic enqueue when the caller commits its transaction;
 - rollback of the enqueue when the caller rolls back;
 - CloudEvents identity and context validation before insertion;
-- idempotent replay of identical content under the same `source + id`;
+- idempotent replay of identical content under the same tenant-scoped identity;
 - exclusive durable delivery state;
 - at most one current, unexpired claim for an event;
 - fencing of every post-claim mutation by event row ID and claim token;
@@ -58,15 +58,22 @@ Dovecote does **not** guarantee:
 - that a successful transport send followed by a process crash can be
   distinguished from a failed send;
 - broker deduplication, consumer idempotency, or transport availability;
-- simultaneous publication of one stream through both CDC and leased workers;
+- simultaneous publication from one Dovecote table set through both CDC and
+  leased workers;
   or
 - application-level audit, event-schema, retention, or privacy correctness.
 
 Delivery is necessarily at least once when workers retry after ambiguous
-failure. Consumers must use the CloudEvents identity pair, `source + id`, as
-their duplicate identity. An application MUST designate one publication owner
-for each stream: either a leased-worker integration or CDC, never both at the
-same time.
+failure. Within one tenant, consumers must use the CloudEvents identity pair,
+`source + id`, as their duplicate identity. A destination shared by multiple
+tenants must include the tenant routing domain in its duplicate identity because
+schema version 2 permits the same `source + id` in separate tenants. An
+application MUST designate one publication owner
+for the complete Dovecote table set: either a leased-worker integration or CDC,
+never both at the same time. The claim operation has no stream scope and cannot
+safely support a different publication mode per stream. A future first-class
+scoped-claim contract would need its own API, indexes, and compatibility review
+before that boundary changes.
 
 ## 3. Project and crate boundaries
 
@@ -303,9 +310,10 @@ trigger, or lifecycle mutation for it.
 
 | Column | Logical type | Rule |
 |---|---|---|
+| `tenant_id` | string, 255 bytes | Required storage-authority tenant; exact validated UTF-8 value. |
 | `row_id` | signed 64-bit, database-generated | Primary key; positive, immutable, monotonically increasing cursor. Gaps are valid. |
 | `stream` | string, 255 bytes | Required routing stream. |
-| `specversion` | string, 8 bytes | Required; exactly `1.0` in schema version 1. |
+| `specversion` | string, 8 bytes | Required; exactly `1.0` in schema versions 1 and 2. |
 | `event_id` | string, 1024 bytes | Required CloudEvents `id`; combined with `source`, at most 2,048 bytes. |
 | `source` | string, 2048 bytes | Required CloudEvents `source` URI-reference; combined with `event_id`, at most 2,048 bytes. |
 | `event_type` | string, 1024 bytes | Required CloudEvents `type`. |
@@ -322,7 +330,7 @@ trigger, or lifecycle mutation for it.
 The database enforces:
 
 - primary-key and positive-row constraints;
-- unique `(source, event_id)` identity;
+- unique `(tenant_id, source, event_id)` identity;
 - allowed `specversion` and `data_kind` values;
 - `data_kind IS NULL` if and only if `data IS NULL`; and
 - `datacontenttype IS NOT NULL` whenever byte length of `data` is greater than
@@ -355,6 +363,7 @@ same statement sequence and caller transaction as its event. The foreign key is
 | Column | Logical type | Rule |
 |---|---|---|
 | `event_row_id` | signed 64-bit | Primary key and foreign key to `dovecote_events(row_id)`. |
+| `tenant_id` | string, 255 bytes | Required storage-authority tenant; must match the event row. |
 | `state` | enum | Exactly `pending`, `claimed`, `delivered`, or `quarantined`. |
 | `available_at` | instant | Required; initial value is database enqueue time. |
 | `attempts` | non-negative signed 64-bit | Starts at zero; checked increment on each successful claim or reclaim. |
@@ -391,8 +400,9 @@ value and uses it for both `dovecote_events.enqueued_at` and the initial
 
 ### 5.4 Idempotent enqueue
 
-The unique CloudEvents identity is `(source, event_id)`, not stream plus an
-application key. Enqueue compares every caller-controlled immutable field:
+The durable event identity is `(tenant_id, source, event_id)`, not stream plus
+an application key. For a tenant-scoped handle, enqueue compares every
+caller-controlled immutable field:
 stream, specversion, ID, source, type, subject, occurrence time, content type,
 schema URI, partition key, extension names/types/values, data kind, and exact
 data bytes. Database-generated `row_id` and `enqueued_at` are excluded.
@@ -421,25 +431,45 @@ owns commit and rollback.
 
 ### 5.5 Tenant boundary
 
-Durable schema version 1 has no `tenant_id` and Dovecote does not implement row-
-level tenant authorization. `stream`, `source`, `subject`, and extension values
-are not security boundaries. An application needing database-enforced tenant
-isolation uses separate databases or schemas and separately authorized pools;
-it applies Dovecote migrations once in each boundary and never gives a tenant
-direct access to shared Dovecote tables.
+Schema version 2 adds a required validated `tenant_id` to both event and
+delivery rows. `TenantId` is an exact, binary-semantic UTF-8 value of at most 255
+bytes; it rejects empty, control, and Unicode noncharacter values. The delivery
+foreign key covers `(tenant_id, event_row_id)`, and tenant-leading indexes back
+claim, page, and operational reads. The adapter stamps the tenant as storage
+authority; it does not add a tenant CloudEvents extension.
 
-An application may use one shared schema only when its own trusted producer and
-worker tier is explicitly authorized to process all rows in that schema and
-tenant-sensitive material stays out of operational context. If a real consumer
-needs tenant-scoped claim, page, retention, or database authorization within one
-table set, Dovecote must add a first-class tenant key and matching indexes in a
-new durable schema design before that deployment. Filtering by stream in
-application code is not an acceptable substitute.
+The PostgreSQL adapter exposes ordinary operations only through a
+tenant-scoped handle. An explicit administrative handle accepts a tenant for
+writes and mutations and is the only all-tenant page, snapshot, or claim
+surface. Every returned `ClaimedEvent` and `PagedEvent` carries the tenant
+metadata needed by privileged workers to route safely. Tenant predicates are
+part of enqueue, import, finalization, claim, mutation, page, snapshot, and
+hydration queries; application-side filtering is not a substitute.
+
+Durable identity is tenant-scoped as `(tenant_id, source, event_id)`. The
+projected CloudEvents identity remains `(source, event_id)`, so applications
+publishing multiple tenants to one destination must carry the tenant routing
+domain outside the CloudEvents projection and partition deduplication by it.
+Tenant scoping controls storage authority and permits the same source and ID in
+separate tenant domains; it does not add a tenant CloudEvents extension.
+
+PostgreSQL additionally ships an opt-in RLS profile. It requires reviewed role
+ownership, a transaction-local tenant setting, and a `BYPASSRLS` administrative
+role; it supplements, rather than replaces, adapter predicates. Version 1 has
+no tenant column: upgrade requires explicit nullable-column preparation,
+operator-owned row backfill, and activation that refuses null or mismatched
+rows. MySQL/MariaDB and SQLite provide the same explicit
+prepare/backfill/activate contract without claiming RLS. No migration guesses
+a tenant. Tenant assignment remains an application trust decision, while the
+`(tenant_id, source, event_id)` tuple is the durable identity oracle within each
+tenant.
 
 ## 6. Public operations
 
-Each SQLx adapter provides the following concrete capabilities using that
-backend's pool, connection, and transaction types:
+Each tenant-aware SQLx adapter provides these concrete capabilities through a
+tenant-scoped handle using that backend's pool, connection, and transaction
+types. Administrative handles expose the same operations with an explicit
+tenant argument for writes/mutations and an explicit all-tenant read surface:
 
 ```text
 enqueue(caller_transaction, NewEvent) -> Result<EnqueueOutcome, EnqueueError>
@@ -457,6 +487,11 @@ quarantine(row_id, claim_token, reason) -> Result<(), MutationError>
 page(after_row_id, limit) -> Result<Vec<PagedEvent>, PageError>
 begin_snapshot() -> Result<SnapshotPager, PageError>
 ```
+
+The PostgreSQL constructors are `PostgresDovecote::for_tenant(tenant_id)` and
+`PostgresDovecote::admin()`. The root adapter owns schema checking and handle
+construction; it does not provide an implicit tenant or infer one from event
+content.
 
 Adapters additionally expose embedded migration artifacts and a read-only
 `check_schema` operation. These are concrete functions or methods, not a common
@@ -494,6 +529,7 @@ pub enum FinalizeOutcome {
 }
 
 pub struct ClaimedEvent {
+    pub tenant_id: TenantId,
     pub row_id: RowId,
     pub event: StoredEvent,
     pub attempts: AttemptCount,
@@ -503,6 +539,7 @@ pub struct ClaimedEvent {
 }
 
 pub struct PagedEvent {
+    pub tenant_id: TenantId,
     pub row_id: RowId,
     pub event: StoredEvent,
     pub enqueued_at: OffsetDateTime,
@@ -681,7 +718,7 @@ diagnostic text and are never parsed to recover a category.
 | `InvalidEvent` | Required attribute, extension, JSON, size, or operational-field bound failed validation. | Correct the producer input. |
 | `InvalidLimit` | Claim/page limit is outside the public range. | Correct configuration or input. |
 | `InvalidDuration` | Lease, delay, or backoff is zero where forbidden, too large, or cannot be represented. | Correct configuration or input. |
-| `IdempotencyConflict` | `source + id` already names different immutable content. | Treat as a producer identity defect; do not retry unchanged. |
+| `IdempotencyConflict` | `(tenant_id, source, event_id)` already names different immutable content. | Treat as a producer identity defect; do not retry unchanged. |
 | `IdentityConflict` | Migration import found different immutable content under an existing identity. | Stop the migration and reconcile the legacy/export ledger. |
 | `ImportConflict` | Migration import found a changed, claimed, retried, or otherwise non-canonical delivery state. | Stop the migration and reconcile state ownership. |
 | `StateConflict` | Migration finalization found a pending delivery that is claimed, retried, quarantined, delayed, already delivered with a different timestamp, or otherwise not canonical. | Stop the migration acknowledgement and reconcile state ownership. |
@@ -997,11 +1034,13 @@ use `partitionkey` as subject or consumer routing input without removing it from
 the event.
 
 For JetStream duplicate suppression, `Nats-Msg-Id` is the lowercase hex SHA-256
-of the unambiguous length-prefixed UTF-8 sequence `source || event_id`. The
-length prefix is an unsigned 64-bit big-endian byte count before each value.
-This is a deterministic transport mapping of the CloudEvents duplicate identity,
-not a replacement for consumer idempotency. The integration documents the
-JetStream duplicate window; duplicates outside it remain possible.
+of an unambiguous length-prefixed UTF-8 sequence containing the tenant routing
+domain, `source`, and `event_id` when destinations are shared. A
+tenant-isolated destination MAY hash only `source || event_id`. The length
+prefix is an unsigned 64-bit big-endian byte count before each value. This is a
+deterministic transport mapping of the durable tenant-scoped identity, not a
+replacement for consumer idempotency. The integration documents the JetStream
+duplicate window; duplicates outside it remain possible.
 
 ### 10.4 Azure Event Grid
 
@@ -1031,6 +1070,7 @@ The connector include list or SMT predicate MUST select only
 | Debezium property or output | Dovecote field | Meaning |
 |---|---|---|
 | `table.field.event.id` | `event_id` | Debezium `id` header; CloudEvents event ID after the downstream binding maps it to `ce_id`. Consumers pair it with `source`. |
+| additional envelope `dovecote_tenant_id` | `tenant_id` | Durable identity/routing metadata; not a CloudEvents extension. A shared destination must retain it for tenant-partitioned deduplication. |
 | `table.field.event.type` | `event_type` | Debezium `type` header; CloudEvents type after the downstream binding maps it to `ce_type`. |
 | `route.by.field` | `stream` | Logical route input. |
 | `route.topic.replacement` | application template using `${routedByValue}` | Explicit stream-to-topic convention. |
@@ -1064,7 +1104,7 @@ transforms.outbox.table.field.event.payload=data
 transforms.outbox.table.expand.json.payload=false
 transforms.outbox.route.by.field=stream
 transforms.outbox.route.topic.replacement=outbox.event.${routedByValue}
-transforms.outbox.table.fields.additional.placement=specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:dovecote_extensions,data_kind:envelope:dovecote_data_kind,row_id:envelope:dovecote_row_id,enqueued_at:envelope:dovecote_enqueued_at
+transforms.outbox.table.fields.additional.placement=tenant_id:envelope:dovecote_tenant_id,specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:dovecote_extensions,data_kind:envelope:dovecote_data_kind,row_id:envelope:dovecote_row_id,enqueued_at:envelope:dovecote_enqueued_at
 ```
 
 Kafka record timestamps have millisecond precision. When Debezium receives a
@@ -1110,7 +1150,8 @@ AsyncAPI MAY describe an application's transport-facing destinations and
 CloudEvents messages. It does not describe Dovecote's SQL lease protocol and is
 not required by the storage crates. An HTTP producer integration MAY accept the
 IETF `Idempotency-Key` header under its own policy, but that transport key does
-not replace or redefine durable CloudEvents `source + id` identity.
+not replace or redefine durable Dovecote identity
+`(tenant_id, source, event_id)`.
 
 Dovecote does not implement CloudEvents SQL/CESQL, CNCF Serverless Workflow, a
 schema registry, or a vendor retry-header vocabulary. They solve querying,
@@ -1181,9 +1222,13 @@ on the same lease recovery rather than a hidden shutdown state.
 
 ### 11.4 Operational signals
 
-Dovecote adds no telemetry runtime to the core crate. Adapter documentation
-provides bounded status queries, and integrations instrument sends using the
-OpenTelemetry messaging semantic conventions where OpenTelemetry is present.
+Dovecote adds no telemetry runtime to the core crate and exposes no status-query
+API. Applications own bounded, read-only operational queries against the
+documented `dovecote_events` and `dovecote_deliveries` schema, including their
+backend-specific time functions, parameter syntax, permissions, and indexes.
+The `page` and snapshot APIs are event inspection/reconciliation tools, not
+status counters. Integrations instrument sends using the OpenTelemetry
+messaging semantic conventions where OpenTelemetry is present.
 Production guidance requires at least:
 
 - pending count and oldest pending age by stream;
@@ -1360,7 +1405,7 @@ enforce the pause aborts cutover.
 Rollback before producer cutover restores the backup or removes only verified
 migration-owned Dovecote rows under the application's written procedure.
 Rollback after Dovecote publication begins cannot pretend downstream effects did
-not occur; it stops publishers, reconciles by `source + id`, and follows the
+not occur; it stops publishers, reconciles by `(tenant_id, source, event_id)`, and follows the
 application incident plan.
 
 If an application genuinely requires zero-downtime bridging, it first deploys a
@@ -1420,7 +1465,8 @@ The supported route is:
    1.x bridge's `finalize_upgrade_reconciliation()` to write the only accepted
    Keepsake 2.0 activation evidence; and
 6. run Keepsake 2.0 `upgrade_migrate()` and `activate_upgrade()`, then deploy
-   the Dovecote-only writer and its one publication owner. Keep the legacy
+   the Dovecote-only writer and its one publication owner for the Dovecote
+   table set. Keep the legacy
    publisher stopped and retain the legacy tables and export ledger read-only
    through the rollback and consumer-deduplication windows.
 

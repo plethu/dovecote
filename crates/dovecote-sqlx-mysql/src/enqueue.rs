@@ -1,14 +1,19 @@
 //! Caller-transaction enqueue and durable-event hydration for MySQL/MariaDB.
 
-use crate::{backend, error::EnqueueError, migration::current_migration};
-use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId};
+use crate::{
+    backend,
+    error::{EnqueueError, is_tenant_source_event_id_duplicate},
+    migration::current_migration,
+};
+use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, MySql, Transaction, query, query_as, query_scalar};
 use time::{OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
 /// Inserts an event and its pending delivery in the supplied transaction.
 /// The caller owns commit and rollback; no pool transaction is created here.
-pub async fn enqueue<'c>(
+pub(crate) async fn enqueue_for_scope<'c>(
     transaction: &mut Transaction<'c, MySql>,
+    tenant_id: &TenantId,
     event: NewEvent,
 ) -> Result<EnqueueOutcome, EnqueueError> {
     validate_enqueue_schema(transaction).await?;
@@ -36,12 +41,13 @@ pub async fn enqueue<'c>(
     let inserted = match query(
         r#"
         INSERT INTO dovecote_events
-            (stream, specversion, event_id, source, event_type, subject,
+            (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
              data_kind, data, enqueued_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     "#,
     )
+    .bind(tenant_id.as_str().as_bytes())
     .bind(event.stream().as_str().as_bytes())
     .bind(event.specversion().as_bytes())
     .bind(event.id().as_str().as_bytes())
@@ -64,13 +70,7 @@ pub async fn enqueue<'c>(
     .await
     {
         Ok(_) => true,
-        Err(source)
-            if source
-                .as_database_error()
-                .is_some_and(|error| error.is_unique_violation()) =>
-        {
-            false
-        }
+        Err(source) if is_tenant_source_event_id_duplicate(&source) => false,
         Err(source) => return Err(EnqueueError::sql("insert event", source)),
     };
 
@@ -80,9 +80,10 @@ pub async fn enqueue<'c>(
                subject, occurred_at, datacontenttype, dataschema,
                partitionkey, extensions, data_kind, data, enqueued_at
         FROM dovecote_events
-        WHERE source = ? AND event_id = ?
+        WHERE tenant_id = ? AND source = ? AND event_id = ?
     "#,
     )
+    .bind(tenant_id.as_str().as_bytes())
     .bind(event.source().as_str().as_bytes())
     .bind(event.id().as_str().as_bytes())
     .fetch_optional(&mut **transaction)
@@ -103,12 +104,14 @@ pub async fn enqueue<'c>(
         });
     }
 
-    let delivery_exists: Option<i64> =
-        query_scalar("SELECT event_row_id FROM dovecote_deliveries WHERE event_row_id = ?")
-            .bind(existing.row_id)
-            .fetch_optional(&mut **transaction)
-            .await
-            .map_err(|source| EnqueueError::sql("check duplicate delivery", source))?;
+    let delivery_exists: Option<i64> = query_scalar(
+        "SELECT event_row_id FROM dovecote_deliveries WHERE tenant_id = ? AND event_row_id = ?",
+    )
+    .bind(tenant_id.as_str().as_bytes())
+    .bind(existing.row_id)
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(|source| EnqueueError::sql("check duplicate delivery", source))?;
     if delivery_exists.is_some() {
         return Ok(EnqueueOutcome::AlreadyEnqueued {
             row_id: existing_id,
@@ -122,7 +125,8 @@ pub async fn enqueue<'c>(
             detail: "an existing event has no delivery row".to_owned(),
         });
     }
-    query("INSERT INTO dovecote_deliveries (event_row_id, state, available_at) VALUES (?, ?, ?)")
+    query("INSERT INTO dovecote_deliveries (tenant_id, event_row_id, state, available_at) VALUES (?, ?, ?, ?)")
+        .bind(tenant_id.as_str().as_bytes())
         .bind(existing.row_id)
         .bind(b"pending".as_slice())
         .bind(operation_time)

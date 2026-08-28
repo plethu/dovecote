@@ -6,19 +6,28 @@ use thiserror::Error;
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 use crate::{
-    bounds::{MAX_EXTENSION_NAME_BYTES, TAGGED_EXTENSION_FIELDS},
+    bounds::{MAX_EXTENSION_NAME_BYTES, TAGGED_EXTENSION_FIELDS, canonicalize_instant},
     error::{ValidationError, ValidationKind},
     validation::{format_timestamp, validate_string, validate_traceparent, validate_tracestate},
     value::{AbsoluteUri, UriReference},
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+/// Validated lower-case name for a CloudEvents extension attribute.
 pub struct ExtensionName(String);
 
 impl ExtensionName {
+    /// Creates an extension name, rejecting reserved, empty, or malformed names.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
-        if value.is_empty() || value.len() > MAX_EXTENSION_NAME_BYTES {
+        if value.is_empty() {
+            return Err(ValidationError::new(
+                "extension name",
+                ValidationKind::Empty,
+            ));
+        }
+
+        if value.len() > MAX_EXTENSION_NAME_BYTES {
             return Err(ValidationError::new(
                 "extension name",
                 ValidationKind::Length,
@@ -57,35 +66,42 @@ impl ExtensionName {
         Ok(Self(value))
     }
 
+    /// Returns the extension name as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Validated UTF-8 value for a string-valued extension.
 pub struct ExtensionString(String);
 
 impl ExtensionString {
+    /// Creates an extension string. Empty strings are valid.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("extension string", &value, None, true)?;
         Ok(Self(value))
     }
 
+    /// Returns the extension value as a string slice.
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+/// Validated, microsecond-precision extension timestamp stored in UTC.
 pub struct Timestamp(OffsetDateTime);
 
 impl Timestamp {
+    /// Creates a timestamp after range, precision, and UTC normalization checks.
     pub fn new(value: OffsetDateTime) -> Result<Self, ValidationError> {
-        crate::bounds::validate_instant("extension timestamp", value)?;
+        let value = canonicalize_instant("extension timestamp", value)?;
         Ok(Self(value))
     }
 
+    /// Returns the timestamp in UTC.
     pub const fn get(&self) -> OffsetDateTime {
         self.0
     }
@@ -93,29 +109,41 @@ impl Timestamp {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
+/// Supported typed representations for a durable extension value.
 pub enum ExtensionValue {
+    /// Boolean extension value.
     Boolean(bool),
+    /// Signed 32-bit integer extension value.
     Integer(i32),
+    /// UTF-8 string extension value.
     String(ExtensionString),
+    /// Opaque bytes encoded as base64 in the durable representation.
     Binary(Vec<u8>),
+    /// Absolute URI extension value.
     Uri(AbsoluteUri),
+    /// URI-reference extension value.
     UriReference(UriReference),
+    /// Timestamp extension value.
     Timestamp(Timestamp),
 }
 
 impl ExtensionValue {
+    /// Creates a string extension value.
     pub fn string(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::String(ExtensionString::new(value)?))
     }
 
+    /// Creates an absolute URI extension value.
     pub fn uri(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::Uri(AbsoluteUri::new(value)?))
     }
 
+    /// Creates a URI-reference extension value.
     pub fn uri_reference(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::UriReference(UriReference::new(value)?))
     }
 
+    /// Creates a timestamp extension value in canonical UTC form.
     pub fn timestamp(value: OffsetDateTime) -> Result<Self, ValidationError> {
         Ok(Self::Timestamp(Timestamp::new(value)?))
     }
@@ -159,13 +187,16 @@ impl ExtensionValue {
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
+/// Ordered set of named extension values.
 pub struct Extensions(BTreeMap<ExtensionName, ExtensionValue>);
 
 impl Extensions {
+    /// Creates an empty extension set.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Inserts a value, rejecting duplicate names.
     pub fn insert(
         &mut self,
         name: ExtensionName,
@@ -181,14 +212,17 @@ impl Extensions {
         Ok(())
     }
 
+    /// Looks up an extension by its validated name.
     pub fn get(&self, name: &ExtensionName) -> Option<&ExtensionValue> {
         self.0.get(name)
     }
 
+    /// Iterates over extension names and values in canonical name order.
     pub fn iter(&self) -> impl Iterator<Item = (&ExtensionName, &ExtensionValue)> {
         self.0.iter()
     }
 
+    /// Serializes the extension set to its deterministic durable JSON form.
     pub fn canonical_json(&self) -> String {
         let mut object = Map::new();
         for (name, value) in &self.0 {
@@ -315,31 +349,71 @@ impl Extensions {
     }
 }
 
+/// Errors produced while decoding canonical extension JSON.
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ExtensionDecodeError {
+    /// The input is not valid JSON; the parser message is retained for diagnosis.
     #[error("extensions JSON is invalid: {message}")]
-    Json { message: String },
+    Json {
+        /// Parser-provided JSON diagnostic.
+        message: String,
+    },
+    /// An extension name failed validation.
     #[error("extension name is invalid: {source}")]
-    InvalidName { source: ValidationError },
+    InvalidName {
+        /// The validation failure for the name.
+        source: ValidationError,
+    },
+    /// An extension object is missing or has unexpected members.
     #[error("extension {name} has invalid shape")]
-    InvalidShape { name: String },
+    InvalidShape {
+        /// Name of the malformed extension, or `<root>`.
+        name: String,
+    },
+    /// A typed extension value does not match its declared type.
     #[error("extension {name} has invalid {type_name} value")]
     InvalidValue {
+        /// Name of the extension with the invalid value.
         name: String,
+        /// Declared durable type name.
         type_name: String,
+        /// Validation failure when one was produced by a constructor.
         source: Option<ValidationError>,
     },
+    /// A binary extension value is not valid base64.
     #[error("extension {name} has invalid binary data: {message}")]
-    InvalidBinary { name: String, message: String },
+    InvalidBinary {
+        /// Name of the extension with invalid bytes.
+        name: String,
+        /// Base64 decoder diagnostic.
+        message: String,
+    },
+    /// A timestamp extension value is not valid RFC 3339 or canonical form.
     #[error("extension {name} has invalid timestamp: {message}")]
-    InvalidTimestamp { name: String, message: String },
+    InvalidTimestamp {
+        /// Name of the extension with the invalid timestamp.
+        name: String,
+        /// Timestamp parser diagnostic.
+        message: String,
+    },
+    /// The decoded extension set violates a cross-extension rule.
     #[error("extension set is invalid: {source}")]
-    InvalidExtensions { source: ValidationError },
+    InvalidExtensions {
+        /// Cross-extension validation failure.
+        source: ValidationError,
+    },
+    /// The input is valid but is not the exact canonical JSON representation.
     #[error("extensions JSON is not the canonical durable representation")]
     NonCanonical,
+    /// The input declares an extension type unsupported by this crate.
     #[error("extension {name} uses unsupported type {type_name}")]
-    UnsupportedType { name: String, type_name: String },
+    UnsupportedType {
+        /// Name of the extension using the unsupported type.
+        name: String,
+        /// Unsupported durable type name.
+        type_name: String,
+    },
 }
 
 fn decode_validated_string(

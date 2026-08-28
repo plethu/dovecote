@@ -139,6 +139,26 @@ fn trace_context_uses_strict_w3c_grammar() {
 }
 
 #[test]
+fn event_and_extension_timestamps_are_stored_as_utc() {
+    let local = OffsetDateTime::parse("2026-01-01T01:00:00.120+01:00", &Rfc3339).unwrap();
+    let utc = local.to_offset(time::UtcOffset::UTC);
+    let timestamp = Timestamp::new(local).unwrap();
+    assert_eq!(timestamp.get(), utc);
+
+    let event = NewEvent::builder(
+        StreamName::new("audit").unwrap(),
+        EventId::new("event-local-time").unwrap(),
+        EventSource::new("https://example.test/source").unwrap(),
+        EventType::new("com.example.audit").unwrap(),
+    )
+    .time(local)
+    .build()
+    .unwrap();
+    assert_eq!(event.time(), Some(utc));
+    assert_eq!(event.into_stored().unwrap().time(), Some(utc));
+}
+
+#[test]
 fn decoded_timestamps_must_use_the_canonical_utc_form() {
     let timestamp =
         Timestamp::new(OffsetDateTime::parse("2026-01-01T00:00:00.120Z", &Rfc3339).unwrap())

@@ -1,6 +1,6 @@
 # Contributing to Dovecote
 
-Dovecote is an unreleased 0.1 project. The accepted contract is
+Dovecote is a pre-1.0 project (`0.1.1`). The accepted contract is
 [SPEC.md](SPEC.md); the public API, SQL schema, migration rules, and release
 evidence are part of the same review surface.
 
@@ -23,9 +23,12 @@ mise run check
 The check task includes formatting, structural checks, all-target/all-feature
 Clippy, workspace tests, TOML and spelling checks, the SQLite migration smoke
 test, the Debezium reference fixture, package archive construction, and a
-whitespace check. Run focused tests as well when changing a backend or public
-contract. Examples and rustdoc are part of the public API and must compile
-under the repository's documented gates.
+whitespace check. It also runs the RustSec-backed cargo-deny advisory, ban,
+license, and source checks; `deny.toml` records the dependency policy. These
+checks are not an independent audit or a compliance claim. Run focused tests
+as well when changing a backend or public contract. Examples and rustdoc are
+part of the public API and must compile under the repository's documented
+gates.
 
 ## Database evidence
 
@@ -56,6 +59,15 @@ Database advertisement additionally requires the exact CI image, conformance
 and migration evidence, package verification, and independent review. CDC has
 a separate release decision; the checked-in Debezium properties file is a
 reference fixture and not live connector evidence.
+
+The destructive v1-to-v2 MySQL/MariaDB upgrade fixture is ignored during the
+ordinary suite because it drops and recreates its tables. Run it only against a
+dedicated disposable database:
+
+```sh
+DOVECOTE_MYSQL_TENANT_UPGRADE_URL=mysql://root:password@127.0.0.1:3306/dovecote_upgrade_test \
+  cargo test -p dovecote-sqlx-mysql --test mysql tenant_upgrade -- --ignored
+```
 
 ## Migrations and durable bytes
 

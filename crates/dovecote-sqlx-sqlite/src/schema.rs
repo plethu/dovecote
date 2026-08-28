@@ -6,7 +6,16 @@ use crate::{
 };
 use sqlx::{FromRow, Row, SqliteConnection, SqlitePool, query, query_as, query_scalar};
 
-/// Verifies the exact v1 table shape, constraints, indexes, and foreign key of
+#[derive(Debug, FromRow)]
+struct SchemaMarker {
+    schema_version: i64,
+    minimum_crate_major: i64,
+    minimum_crate_minor: i64,
+    minimum_crate_patch: i64,
+    rolling_compatible: i64,
+}
+
+/// Verifies the exact v2 table shape, constraints, indexes, and foreign key of
 /// the installed schema. It never applies a migration.
 pub async fn check_schema(pool: &SqlitePool) -> Result<(), SchemaError> {
     let mut connection = pool
@@ -30,12 +39,14 @@ pub(crate) async fn check_schema_connection(
 
     let migration = current_migration().map_err(mismatch)?;
     migration_is_usable(migration).map_err(mismatch)?;
+    check_schema_marker(connection, migration).await?;
 
     check_columns(
         connection,
         "dovecote_events",
         &[
             ColumnSpec::required("row_id", "INTEGER", true),
+            ColumnSpec::required("tenant_id", "TEXT", false),
             ColumnSpec::required("stream", "TEXT", false),
             ColumnSpec::required("specversion", "TEXT", false),
             ColumnSpec::required("event_id", "TEXT", false),
@@ -58,6 +69,7 @@ pub(crate) async fn check_schema_connection(
         "dovecote_deliveries",
         &[
             ColumnSpec::required("event_row_id", "INTEGER", true),
+            ColumnSpec::required("tenant_id", "TEXT", false),
             ColumnSpec::required("state", "TEXT", false),
             ColumnSpec::required("available_at", "TEXT", false),
             ColumnSpec::required("attempts", "INTEGER", false),
@@ -74,16 +86,16 @@ pub(crate) async fn check_schema_connection(
     .await?;
 
     let sources = query_as::<_, TableSource>(
-        "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('dovecote_events', 'dovecote_deliveries')",
+        "SELECT name, sql FROM sqlite_master WHERE type = 'table' AND name IN ('dovecote_schema', 'dovecote_events', 'dovecote_deliveries')",
     ).fetch_all(&mut *connection).await
         .map_err(|source| SchemaError::sql("read schema definitions", source))?;
-    for name in ["dovecote_events", "dovecote_deliveries"] {
+    for name in ["dovecote_schema", "dovecote_events", "dovecote_deliveries"] {
         if !sources.iter().any(|source| source.name == name) {
             return Err(mismatch(format!("required table {name} is missing")));
         }
     }
 
-    for name in ["dovecote_events", "dovecote_deliveries"] {
+    for name in ["dovecote_schema", "dovecote_events", "dovecote_deliveries"] {
         let source = sources
             .iter()
             .find(|source| source.name == name)
@@ -102,7 +114,7 @@ pub(crate) async fn check_schema_connection(
     // add an unreviewed trigger that changes durable invariants for this
     // connection while the main schema still appears exact.
     let extra_objects: Vec<SchemaObject> = query_as(
-        "SELECT type, name, COALESCE(tbl_name, '') AS tbl_name FROM sqlite_master WHERE (name LIKE 'dovecote_%' OR tbl_name IN ('dovecote_events', 'dovecote_deliveries')) AND NOT (type = 'table' AND name IN ('dovecote_events', 'dovecote_deliveries')) AND NOT (type = 'index' AND name IN ('dovecote_events_source_event_id', 'dovecote_deliveries_claimable', 'dovecote_deliveries_expired_claims')) UNION ALL SELECT type, name, COALESCE(tbl_name, '') AS tbl_name FROM sqlite_temp_master WHERE name LIKE 'dovecote_%' OR tbl_name IN ('dovecote_events', 'dovecote_deliveries')",
+        "SELECT type, name, COALESCE(tbl_name, '') AS tbl_name FROM sqlite_master WHERE (name LIKE 'dovecote_%' OR tbl_name IN ('dovecote_events', 'dovecote_deliveries')) AND NOT (type = 'table' AND name IN ('dovecote_schema', 'dovecote_events', 'dovecote_deliveries')) AND NOT (type = 'index' AND name IN ('dovecote_events_tenant_source_event_id', 'dovecote_events_tenant_row', 'dovecote_deliveries_claimable', 'dovecote_deliveries_expired_claims', 'sqlite_autoindex_dovecote_events_1')) UNION ALL SELECT type, name, COALESCE(tbl_name, '') AS tbl_name FROM sqlite_temp_master WHERE name LIKE 'dovecote_%' OR tbl_name IN ('dovecote_events', 'dovecote_deliveries')",
     )
     .fetch_all(&mut *connection)
     .await
@@ -117,9 +129,18 @@ pub(crate) async fn check_schema_connection(
     check_index(
         connection,
         "dovecote_events",
-        "dovecote_events_source_event_id",
+        "dovecote_events_tenant_source_event_id",
         true,
-        &["source", "event_id"],
+        &["tenant_id", "source", "event_id"],
+        migration.sql(),
+    )
+    .await?;
+    check_index(
+        connection,
+        "dovecote_events",
+        "dovecote_events_tenant_row",
+        false,
+        &["tenant_id", "row_id"],
         migration.sql(),
     )
     .await?;
@@ -128,7 +149,7 @@ pub(crate) async fn check_schema_connection(
         "dovecote_deliveries",
         "dovecote_deliveries_claimable",
         false,
-        &["state", "available_at", "event_row_id"],
+        &["tenant_id", "state", "available_at", "event_row_id"],
         migration.sql(),
     )
     .await?;
@@ -137,11 +158,48 @@ pub(crate) async fn check_schema_connection(
         "dovecote_deliveries",
         "dovecote_deliveries_expired_claims",
         false,
-        &["state", "claim_expires_at", "event_row_id"],
+        &["tenant_id", "state", "claim_expires_at", "event_row_id"],
         migration.sql(),
     )
     .await?;
-    check_foreign_key(connection).await
+    check_foreign_key(connection).await?;
+    let violations = query("PRAGMA foreign_key_check")
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(|source| SchemaError::sql("check foreign-key integrity", source))?;
+    if !violations.is_empty() {
+        return Err(mismatch("installed schema contains foreign-key violations"));
+    }
+    Ok(())
+}
+
+async fn check_schema_marker(
+    connection: &mut SqliteConnection,
+    migration: crate::migration::Migration,
+) -> Result<(), SchemaError> {
+    let markers = query_as::<_, SchemaMarker>(
+        "SELECT schema_version, minimum_crate_major, minimum_crate_minor, minimum_crate_patch, rolling_compatible FROM dovecote_schema",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(|source| SchemaError::sql("check schema marker", source))?;
+    if markers.len() != 1 {
+        return Err(mismatch(format!(
+            "expected exactly one schema marker row, found {}",
+            markers.len()
+        )));
+    }
+    let marker = &markers[0];
+    let minimum = migration.compatibility().minimum();
+    if marker.schema_version != i64::from(migration.version())
+        || marker.minimum_crate_major != i64::from(minimum.major())
+        || marker.minimum_crate_minor != i64::from(minimum.minor())
+        || marker.minimum_crate_patch != i64::from(minimum.patch())
+        || marker.rolling_compatible != if migration.rolling_compatible() { 1 } else { 0 }
+    {
+        return Err(mismatch("schema marker is incompatible with this adapter"));
+    }
+    Ok(())
 }
 
 fn mismatch(detail: impl Into<String>) -> SchemaError {
@@ -308,7 +366,7 @@ async fn check_index(
         )));
     }
 
-    if expected_name == "dovecote_events_source_event_id" {
+    if expected_name == "dovecote_events_tenant_source_event_id" {
         let xinfo_sql = sqlx::AssertSqlSafe(format!("PRAGMA index_xinfo({expected_name})"));
         let xinfo = query(xinfo_sql)
             .fetch_all(&mut *connection)
@@ -324,7 +382,13 @@ async fn check_index(
             )
             .map(|(_, collation)| collation)
             .collect::<Vec<_>>();
-        if collations != ["BINARY".to_owned(), "BINARY".to_owned()] {
+        if collations
+            != [
+                "BINARY".to_owned(),
+                "BINARY".to_owned(),
+                "BINARY".to_owned(),
+            ]
+        {
             return Err(mismatch("identity index collation is not BINARY"));
         }
     }
@@ -337,16 +401,26 @@ async fn check_foreign_key(connection: &mut SqliteConnection) -> Result<(), Sche
         .fetch_all(&mut *connection)
         .await
         .map_err(|source| SchemaError::sql("check delivery foreign key", source))?;
-    let Some(row) = rows
+    let matching = rows
         .iter()
-        .find(|row| row.try_get::<String, _>("table").ok().as_deref() == Some("dovecote_events"))
-    else {
+        .filter(|row| row.try_get::<String, _>("table").ok().as_deref() == Some("dovecote_events"))
+        .collect::<Vec<_>>();
+    if matching.len() != 2 {
         return Err(mismatch("delivery foreign key is missing"));
-    };
-    let from = row.try_get::<String, _>("from").unwrap_or_default();
-    let to = row.try_get::<String, _>("to").unwrap_or_default();
-    let on_delete = row.try_get::<String, _>("on_delete").unwrap_or_default();
-    if from != "event_row_id" || to != "row_id" || !on_delete.eq_ignore_ascii_case("RESTRICT") {
+    }
+
+    let columns = matching
+        .iter()
+        .map(|row| {
+            (
+                row.try_get::<String, _>("from").unwrap_or_default(),
+                row.try_get::<String, _>("to").unwrap_or_default(),
+            )
+        })
+        .collect::<Vec<_>>();
+    if !columns.contains(&("tenant_id".to_owned(), "tenant_id".to_owned()))
+        || !columns.contains(&("event_row_id".to_owned(), "row_id".to_owned()))
+    {
         return Err(mismatch("delivery foreign key is incompatible"));
     }
     Ok(())
@@ -394,6 +468,10 @@ fn normalize_sql(value: &str) -> String {
         if character == '\'' {
             in_string = !in_string;
             normalized.push(character);
+        } else if character == '"' && !in_string {
+            // SQLite quotes a rebuilt table name after ALTER TABLE RENAME;
+            // identifier quoting does not change the table contract.
+            continue;
         } else if !character.is_ascii_whitespace() {
             if in_string {
                 normalized.push(character);

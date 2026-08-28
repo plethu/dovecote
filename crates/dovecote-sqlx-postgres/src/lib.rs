@@ -6,33 +6,37 @@
 //! database-time, fencing, and rollback contracts are covered by repository
 //! tests; release advertisement remains subject to the published support matrix
 //! and release gates.
+#![warn(missing_docs)]
 
+mod delivery_state;
 mod enqueue;
 mod error;
 mod finalize;
+mod hydrate;
 mod import;
 mod lifecycle;
+mod lifecycle_mutation;
 mod migration;
 mod page;
+mod rls;
 mod schema;
+mod scope;
 
-pub use enqueue::enqueue;
 pub use error::{
     ClaimError, EnqueueError, FinalizeError, ImportError, MutationError, PageError, SchemaError,
     TransientKind,
 };
-pub use finalize::finalize_pending_delivery_for_migration;
-pub use import::import_for_migration;
-pub use lifecycle::{ack, claim, quarantine, release, renew, retry};
 pub use migration::{
-    CrateVersion, MIGRATIONS, Migration, MigrationCompatibility, MigrationCompatibilityError,
-    SCHEMA_VERSION,
+    CrateVersion, LEGACY_MIGRATION, MIGRATIONS, Migration, MigrationCompatibility,
+    MigrationCompatibilityError, SCHEMA_VERSION, V1_TENANT_ACTIVATE_SQL, V1_TENANT_PREPARE_SQL,
 };
-pub use page::{SnapshotPager, begin_snapshot, page};
+pub use page::SnapshotPager;
+pub use rls::{RLS_PROFILE_SQL, bind_tenant};
 pub use schema::check_schema;
 
-use dovecote::{EnqueueOutcome, FinalizeOutcome, ImportOutcome, ImportedDeliveryState, NewEvent};
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::PgPool;
+
+pub use scope::{AdminDovecote, TenantDovecote};
 
 /// PostgreSQL adapter for Dovecote's durable event and delivery schema.
 #[derive(Clone)]
@@ -51,116 +55,22 @@ impl PostgresDovecote {
         &self.pool
     }
 
-    /// Enqueues an event in the caller-owned transaction.
-    pub async fn enqueue<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Postgres>,
-        event: NewEvent,
-    ) -> Result<EnqueueOutcome, EnqueueError> {
-        enqueue(transaction, event).await
+    /// Creates a handle whose ordinary operations are restricted to `tenant`.
+    pub fn for_tenant(&self, tenant: dovecote::TenantId) -> TenantDovecote {
+        TenantDovecote::new(self.pool.clone(), tenant)
     }
 
-    /// Imports one already-validated event and its legacy delivery state in
-    /// the caller-owned transaction. This is migration infrastructure, not a
-    /// replacement for [`Self::enqueue`].
-    pub async fn import_for_migration<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Postgres>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, ImportError> {
-        import_for_migration(transaction, event, state).await
-    }
-
-    /// Records the legacy publisher's authoritative delivery time for a
-    /// canonical pending migration import. This operation is migration
-    /// infrastructure, not an ordinary acknowledgement shortcut.
-    pub async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        transaction: &mut Transaction<'c, Postgres>,
-        row_id: dovecote::RowId,
-        delivered_at: time::OffsetDateTime,
-    ) -> Result<FinalizeOutcome, FinalizeError> {
-        finalize_pending_delivery_for_migration(transaction, row_id, delivered_at).await
+    /// Creates an explicit all-tenant administrative handle.
+    ///
+    /// This handle does not provide authorization. Applications must construct
+    /// it only around a separately authorized worker or operator pool.
+    pub fn admin(&self) -> AdminDovecote {
+        AdminDovecote::new(self.pool.clone())
     }
 
     /// Verifies that the pool's current PostgreSQL schema satisfies Dovecote
-    /// migration version 1.
+    /// migration version 2.
     pub async fn check_schema(&self) -> Result<(), SchemaError> {
         check_schema(&self.pool).await
-    }
-
-    /// Reads a bounded live page after `after_row_id`.
-    pub async fn page(
-        &self,
-        after_row_id: Option<dovecote::RowId>,
-        limit: dovecote::Limit,
-    ) -> Result<Vec<dovecote::PagedEvent>, PageError> {
-        page(&self.pool, after_row_id, limit).await
-    }
-
-    /// Begins a finite, repeatable-read snapshot pager.
-    pub async fn begin_snapshot(&self) -> Result<SnapshotPager, PageError> {
-        begin_snapshot(&self.pool).await
-    }
-
-    /// Claims eligible events under short PostgreSQL transactions.
-    pub async fn claim(
-        &self,
-        worker: dovecote::WorkerId,
-        lease_for: dovecote::Lease,
-        limit: dovecote::Limit,
-    ) -> Result<Vec<dovecote::ClaimedEvent>, ClaimError> {
-        claim(&self.pool, worker, lease_for, limit).await
-    }
-
-    /// Renews one current, unexpired claim using PostgreSQL time.
-    pub async fn renew(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        lease_for: dovecote::Lease,
-    ) -> Result<(), MutationError> {
-        renew(&self.pool, row_id, claim_token, lease_for).await
-    }
-
-    /// Acknowledges one current, unexpired claim.
-    pub async fn ack(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-    ) -> Result<(), MutationError> {
-        ack(&self.pool, row_id, claim_token).await
-    }
-
-    /// Returns one current, unexpired claim to pending with a failure.
-    pub async fn retry(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        failure: &dovecote::Failure,
-        backoff: dovecote::Delay,
-    ) -> Result<(), MutationError> {
-        retry(&self.pool, row_id, claim_token, failure, backoff).await
-    }
-
-    /// Returns one current, unexpired claim to pending after a delay.
-    pub async fn release(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        delay: dovecote::Delay,
-    ) -> Result<(), MutationError> {
-        release(&self.pool, row_id, claim_token, delay).await
-    }
-
-    /// Quarantines one current, unexpired claim with an operator reason.
-    pub async fn quarantine(
-        &self,
-        row_id: dovecote::RowId,
-        claim_token: &dovecote::ClaimToken,
-        reason: &dovecote::QuarantineReason,
-    ) -> Result<(), MutationError> {
-        quarantine(&self.pool, row_id, claim_token, reason).await
     }
 }

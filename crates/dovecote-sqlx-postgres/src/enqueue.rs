@@ -4,7 +4,7 @@ use crate::{
     error::EnqueueError,
     migration::{SchemaMarker, current_migration, marker_matches_migration},
 };
-use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId};
+use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, Postgres, Transaction, query, query_as, query_scalar};
 use time::OffsetDateTime;
 
@@ -16,8 +16,9 @@ use time::OffsetDateTime;
 /// [`crate::check_schema`] call. The marker and domain tables are validated in
 /// the caller transaction before any write, then unqualified table names are
 /// used for the remainder of the operation.
-pub async fn enqueue<'c>(
+pub(crate) async fn enqueue_for_scope<'c>(
     transaction: &mut Transaction<'c, Postgres>,
+    tenant_id: &TenantId,
     event: NewEvent,
 ) -> Result<EnqueueOutcome, EnqueueError> {
     validate_enqueue_schema(transaction).await?;
@@ -30,14 +31,15 @@ pub async fn enqueue<'c>(
     let inserted = query_as::<_, InsertedEvent>(
         r#"
         INSERT INTO dovecote_events
-            (stream, specversion, event_id, source, event_type, subject,
+            (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
              data_kind, data)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-        ON CONFLICT DO NOTHING
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+        ON CONFLICT (tenant_id, source, event_id) DO NOTHING
         RETURNING row_id, enqueued_at
         "#,
     )
+    .bind(tenant_id.as_str())
     .bind(event.stream().as_str())
     .bind(event.specversion())
     .bind(event.id().as_str())
@@ -62,9 +64,11 @@ pub async fn enqueue<'c>(
                    subject, occurred_at, datacontenttype, dataschema,
                    partitionkey, extensions, data_kind, data, enqueued_at
             FROM dovecote_events
-            WHERE source = $1 COLLATE "C" AND event_id = $2 COLLATE "C"
+            WHERE tenant_id = $1 COLLATE "C"
+              AND source = $2 COLLATE "C" AND event_id = $3 COLLATE "C"
             "#,
         )
+        .bind(tenant_id.as_str())
         .bind(event.source().as_str())
         .bind(event.id().as_str())
         .fetch_optional(&mut **transaction)
@@ -81,7 +85,8 @@ pub async fn enqueue<'c>(
         }
 
         let delivery_exists: Option<i64> =
-            query_scalar("SELECT event_row_id FROM dovecote_deliveries WHERE event_row_id = $1")
+            query_scalar("SELECT event_row_id FROM dovecote_deliveries WHERE tenant_id = $1 AND event_row_id = $2")
+                .bind(tenant_id.as_str())
                 .bind(existing.row_id)
                 .fetch_optional(&mut **transaction)
                 .await
@@ -99,8 +104,9 @@ pub async fn enqueue<'c>(
 
     let row_id = row_id(inserted.row_id).map_err(EnqueueError::serialization)?;
     query(
-        "INSERT INTO dovecote_deliveries (event_row_id, state, available_at) VALUES ($1, 'pending', $2)",
+        "INSERT INTO dovecote_deliveries (tenant_id, event_row_id, state, available_at) VALUES ($1, $2, 'pending', $3)",
     )
+    .bind(tenant_id.as_str())
     .bind(inserted.row_id)
     .bind(inserted.enqueued_at)
     .execute(&mut **transaction)

@@ -5,12 +5,13 @@
 //! of the portable delivery states below in the caller's write transaction.
 
 use crate::{
+    delivery_state::{DeliveryRow, matches_import},
     enqueue::{ExistingEvent, parse_timestamp, same_event, validate_existing_event},
     error::ImportError,
     schema::check_schema_connection,
     transaction_is_write,
 };
-use dovecote::{ImportOutcome, ImportedDeliveryState, NewEvent, RowId};
+use dovecote::{ImportOutcome, ImportedDeliveryState, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, Sqlite, Transaction, query, query_as, query_scalar};
 
 /// Imports one event and a portable legacy delivery state in the supplied
@@ -22,8 +23,9 @@ use sqlx::{FromRow, Sqlite, Transaction, query, query_as, query_scalar};
 /// tokens, retries, and quarantines are not importable.
 /// An active legacy claim must finish, expire, or be explicitly fenced before
 /// the caller maps that source row to `Pending`.
-pub async fn import_for_migration<'c>(
+pub(crate) async fn import_for_scope<'c>(
     transaction: &mut Transaction<'c, Sqlite>,
+    tenant_id: &TenantId,
     event: NewEvent,
     state: ImportedDeliveryState,
 ) -> Result<ImportOutcome, ImportError> {
@@ -55,8 +57,9 @@ pub async fn import_for_migration<'c>(
         )
     });
     let inserted = query_as::<_, InsertedEvent>(
-        "INSERT INTO dovecote_events (stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(source, event_id) DO NOTHING RETURNING row_id",
+        "INSERT INTO dovecote_events (tenant_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(tenant_id, source, event_id) DO NOTHING RETURNING row_id",
     )
+    .bind(tenant_id.as_str())
     .bind(event.stream().as_str())
     .bind(event.specversion())
     .bind(event.id().as_str())
@@ -77,13 +80,21 @@ pub async fn import_for_migration<'c>(
 
     if let Some(inserted) = inserted {
         let row_id = row_id(inserted.row_id)?;
-        insert_delivery(transaction, inserted.row_id, &operation_time, state).await?;
+        insert_delivery(
+            transaction,
+            tenant_id,
+            inserted.row_id,
+            &operation_time,
+            state,
+        )
+        .await?;
         return Ok(ImportOutcome::Imported { row_id });
     }
 
     let existing = query_as::<_, ExistingEvent>(
-        "SELECT row_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at FROM dovecote_events WHERE source = ? COLLATE BINARY AND event_id = ? COLLATE BINARY",
+        "SELECT row_id, stream, specversion, event_id, source, event_type, subject, occurred_at, datacontenttype, dataschema, partitionkey, extensions, data_kind, data, enqueued_at FROM dovecote_events WHERE tenant_id = ? COLLATE BINARY AND source = ? COLLATE BINARY AND event_id = ? COLLATE BINARY",
     )
+    .bind(tenant_id.as_str())
     .bind(event.source().as_str())
     .bind(event.id().as_str())
     .fetch_optional(&mut **transaction)
@@ -103,10 +114,10 @@ pub async fn import_for_migration<'c>(
         });
     }
 
-    let delivery = query_as::<_, ExistingDelivery>(
-        "SELECT state, attempts, claim_token, claimed_by, claim_expires_at, last_failure_code, last_failure_detail, delivered_at, quarantined_at, quarantine_reason, available_at FROM dovecote_deliveries WHERE event_row_id = ?",
+    let delivery = query_as::<_, DeliveryRow>(
+        "SELECT state, attempts, claim_token, claimed_by, claim_expires_at, last_failure_code, last_failure_detail, delivered_at, quarantined_at, quarantine_reason, available_at FROM dovecote_deliveries WHERE tenant_id = ? AND event_row_id = ?",
     )
-    .bind(existing.row_id)
+    .bind(tenant_id.as_str()).bind(existing.row_id)
     .fetch_optional(&mut **transaction)
     .await
     .map_err(|source| ImportError::sql("find imported delivery", source))?
@@ -114,7 +125,11 @@ pub async fn import_for_migration<'c>(
         detail: "an existing event has no delivery row".to_owned(),
     })?;
 
-    if delivery_matches(&delivery, state, &existing.enqueued_at)? {
+    if matches_import(&delivery, state, &existing.enqueued_at).map_err(|detail| {
+        ImportError::MigrationMismatch {
+            detail: detail.to_owned(),
+        }
+    })? {
         Ok(ImportOutcome::AlreadyImported {
             row_id: existing_id,
         })
@@ -127,6 +142,7 @@ pub async fn import_for_migration<'c>(
 
 async fn insert_delivery<'c>(
     transaction: &mut Transaction<'c, Sqlite>,
+    tenant_id: &TenantId,
     event_row_id: i64,
     operation_time: &str,
     state: ImportedDeliveryState,
@@ -144,9 +160,9 @@ async fn insert_delivery<'c>(
         }
     };
     query(
-        "INSERT INTO dovecote_deliveries (event_row_id, state, available_at, attempts, delivered_at) VALUES (?, ?, ?, 0, ?)",
+        "INSERT INTO dovecote_deliveries (tenant_id, event_row_id, state, available_at, attempts, delivered_at) VALUES (?, ?, ?, ?, 0, ?)",
     )
-    .bind(event_row_id)
+    .bind(tenant_id.as_str()).bind(event_row_id)
     .bind(state_name)
     .bind(operation_time)
     .bind(delivered_at)
@@ -159,53 +175,6 @@ async fn insert_delivery<'c>(
 #[derive(Debug, FromRow)]
 struct InsertedEvent {
     row_id: i64,
-}
-
-#[derive(Debug, FromRow)]
-struct ExistingDelivery {
-    state: String,
-    attempts: i64,
-    claim_token: Option<Vec<u8>>,
-    claimed_by: Option<String>,
-    claim_expires_at: Option<String>,
-    last_failure_code: Option<String>,
-    last_failure_detail: Option<String>,
-    delivered_at: Option<String>,
-    quarantined_at: Option<String>,
-    quarantine_reason: Option<String>,
-    available_at: String,
-}
-
-fn delivery_matches(
-    row: &ExistingDelivery,
-    state: ImportedDeliveryState,
-    enqueued_at: &str,
-) -> Result<bool, ImportError> {
-    let canonical = row.attempts == 0
-        && row.claim_token.is_none()
-        && row.claimed_by.is_none()
-        && row.claim_expires_at.is_none()
-        && row.last_failure_code.is_none()
-        && row.last_failure_detail.is_none()
-        && row.quarantined_at.is_none()
-        && row.quarantine_reason.is_none()
-        && row.available_at == enqueued_at;
-    Ok(match state {
-        ImportedDeliveryState::Pending => {
-            canonical && row.state == "pending" && row.delivered_at.is_none()
-        }
-        ImportedDeliveryState::Delivered { delivered_at } => {
-            let delivered_at = crate::enqueue::format_timestamp(delivered_at);
-            canonical
-                && row.state == "delivered"
-                && row.delivered_at.as_deref() == Some(delivered_at.as_str())
-        }
-        _ => {
-            return Err(ImportError::MigrationMismatch {
-                detail: "adapter does not support this imported delivery state".to_owned(),
-            });
-        }
-    })
 }
 
 fn row_id(value: i64) -> Result<RowId, ImportError> {

@@ -92,7 +92,7 @@ required_properties=(
     "transforms.outbox.table.expand.json.payload=false"
     "transforms.outbox.route.by.field=stream"
     'transforms.outbox.route.topic.replacement=outbox.event.${routedByValue}'
-    "transforms.outbox.table.fields.additional.placement=specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:dovecote_extensions,data_kind:envelope:dovecote_data_kind,row_id:envelope:dovecote_row_id,enqueued_at:envelope:dovecote_enqueued_at"
+    "transforms.outbox.table.fields.additional.placement=tenant_id:envelope:dovecote_tenant_id,specversion:header:ce_specversion,source:header:ce_source,subject:header:ce_subject,occurred_at:header:ce_time,datacontenttype:header:content-type,dataschema:header:ce_dataschema,partitionkey:header:ce_partitionkey,extensions:envelope:dovecote_extensions,data_kind:envelope:dovecote_data_kind,row_id:envelope:dovecote_row_id,enqueued_at:envelope:dovecote_enqueued_at"
 )
 
 check_config() {

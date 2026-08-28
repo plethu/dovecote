@@ -36,6 +36,7 @@ struct CdcInput {
 #[derive(Clone, Debug, Deserialize)]
 struct CdcRow {
     row_id: i64,
+    tenant_id: String,
     event_id: String,
     event_type: String,
     stream: String,
@@ -132,14 +133,15 @@ fn transform(input: &CdcInput) -> Result<TransformResult, String> {
     headers.insert("ce_dataschema".to_owned(), row.dataschema.clone());
     headers.insert("ce_partitionkey".to_owned(), row.partitionkey.clone());
 
-    // The declared converter puts the payload and only Dovecote's four
-    // additional envelope fields in one value envelope. `payload` is a
+    // The declared converter puts the payload and Dovecote's tenant/routing
+    // and additional envelope fields in one value envelope. `payload` is a
     // base64 string under this fixture's JSON converter assumption.
     let mut envelope = BTreeMap::new();
     envelope.insert(
         "payload".to_owned(),
         data.as_deref().map(|value| BASE64.encode(value)),
     );
+    envelope.insert("dovecote_tenant_id".to_owned(), Some(row.tenant_id.clone()));
     envelope.insert(
         "dovecote_extensions".to_owned(),
         Some(row.extensions.clone()),
@@ -267,7 +269,7 @@ fn reference_transform_fixtures_cover_selection_bytes_nulls_and_time_precision()
                     "{}",
                     fixture.name
                 );
-                assert_eq!(raw.envelope.len(), 5, "{}", fixture.name);
+                assert_eq!(raw.envelope.len(), 6, "{}", fixture.name);
                 assert!(raw.envelope.contains_key("payload"), "{}", fixture.name);
                 assert!(
                     raw.headers.contains_key("ce_specversion"),

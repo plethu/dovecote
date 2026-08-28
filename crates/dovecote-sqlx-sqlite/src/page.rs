@@ -6,13 +6,13 @@ use crate::{
     hydrate::{DurableRow, hydrate_page},
     install_foreign_keys,
 };
-use dovecote::{Limit, PagedEvent, RowId};
+use dovecote::{Limit, PagedEvent, RowId, TenantId};
 use sqlx::{Sqlite, SqlitePool, Transaction, query_as, query_scalar};
 use std::marker::PhantomData;
 
-/// Reads one independent live page. Separate calls do not share a snapshot.
-pub async fn page(
+pub(crate) async fn page_for_scope(
     pool: &SqlitePool,
+    tenant_id: Option<&TenantId>,
     after_row_id: Option<RowId>,
     limit: Limit,
 ) -> Result<Vec<PagedEvent>, PageError> {
@@ -23,8 +23,9 @@ pub async fn page(
     install_foreign_keys(&mut connection)
         .await
         .map_err(|source| PageError::sql("enable live-page foreign keys", source))?;
-    read_page(
+    read_page_scoped(
         &mut *connection,
+        tenant_id,
         after_row_id.map_or(0, RowId::get),
         None,
         limit,
@@ -32,23 +33,27 @@ pub async fn page(
     .await
 }
 
-/// Begins one finite read transaction and records its row-id ceiling only
-/// after the snapshot has been established.
-pub async fn begin_snapshot(pool: &SqlitePool) -> Result<SnapshotPager, PageError> {
+pub(crate) async fn begin_snapshot_for_scope(
+    pool: &SqlitePool,
+    tenant_id: Option<&TenantId>,
+) -> Result<SnapshotPager, PageError> {
     let mut transaction = begin_read(pool)
         .await
         .map_err(|source| PageError::sql("begin snapshot transaction", source))?;
-    let upper_bound =
-        match query_scalar::<_, Option<i64>>("SELECT MAX(row_id) FROM dovecote_events")
-            .fetch_one(&mut *transaction)
-            .await
-        {
-            Ok(value) => value,
-            Err(source) => {
-                let _ = transaction.rollback().await;
-                return Err(PageError::sql("read snapshot upper row ID", source));
-            }
-        };
+    let upper_bound = match query_scalar::<_, Option<i64>>(
+        "SELECT MAX(row_id) FROM dovecote_events WHERE (? IS NULL OR tenant_id = ?)",
+    )
+    .bind(tenant_id.map(TenantId::as_str))
+    .bind(tenant_id.map(TenantId::as_str))
+    .fetch_one(&mut *transaction)
+    .await
+    {
+        Ok(value) => value,
+        Err(source) => {
+            let _ = transaction.rollback().await;
+            return Err(PageError::sql("read snapshot upper row ID", source));
+        }
+    };
     let upper_bound = match upper_bound
         .map(|value| RowId::new(value).map_err(|error| PageError::serialization(error.to_string())))
         .transpose()
@@ -64,6 +69,7 @@ pub async fn begin_snapshot(pool: &SqlitePool) -> Result<SnapshotPager, PageErro
         upper_bound,
         cursor: None,
         exhausted: upper_bound.is_none(),
+        tenant_id: tenant_id.cloned(),
         _not_send: PhantomData,
     })
 }
@@ -86,19 +92,24 @@ pub struct SnapshotPager {
     cursor: Option<RowId>,
     exhausted: bool,
     _not_send: PhantomData<*mut ()>,
+    tenant_id: Option<TenantId>,
 }
 
 impl SnapshotPager {
+    /// Returns the last row ID returned by a non-empty page.
     pub const fn cursor(&self) -> Option<RowId> {
         self.cursor
     }
+    /// Returns the maximum row ID visible to this pager.
     pub const fn upper_bound(&self) -> Option<RowId> {
         self.upper_bound
     }
+    /// Returns whether the pager has returned its final page.
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted
     }
 
+    /// Reads the next bounded page from the retained snapshot.
     pub async fn next_page(&mut self, limit: Limit) -> Result<Vec<PagedEvent>, PageError> {
         if self.exhausted {
             return Ok(Vec::new());
@@ -108,8 +119,9 @@ impl SnapshotPager {
         let upper = self
             .upper_bound
             .expect("non-exhausted pager has an upper bound");
-        let result = read_page(
+        let result = read_page_scoped(
             &mut **transaction,
+            self.tenant_id.as_ref(),
             self.cursor.map_or(0, RowId::get),
             Some(upper.get()),
             limit,
@@ -138,6 +150,7 @@ impl SnapshotPager {
         Ok(rows)
     }
 
+    /// Commits the read-only snapshot transaction and releases its connection.
     pub async fn finish(mut self) -> Result<(), PageError> {
         let Some(transaction) = self.transaction.take() else {
             return Ok(());
@@ -146,6 +159,7 @@ impl SnapshotPager {
             .await
             .map_err(|source| PageError::sql("finish snapshot transaction", source))
     }
+    /// Rolls back the snapshot transaction and releases its connection.
     pub async fn rollback(mut self) -> Result<(), PageError> {
         let Some(transaction) = self.transaction.take() else {
             return Ok(());
@@ -155,13 +169,15 @@ impl SnapshotPager {
             .await
             .map_err(|source| PageError::sql("rollback snapshot transaction", source))
     }
+    /// Closes the pager by rolling back its transaction.
     pub async fn close(self) -> Result<(), PageError> {
         self.rollback().await
     }
 }
 
-async fn read_page<'c, E>(
+async fn read_page_scoped<'c, E>(
     executor: E,
+    tenant_id: Option<&TenantId>,
     after_row_id: i64,
     upper_bound: Option<i64>,
     limit: Limit,
@@ -169,18 +185,48 @@ async fn read_page<'c, E>(
 where
     E: sqlx::Executor<'c, Database = Sqlite>,
 {
-    let rows = query_as::<_, DurableRow>(PAGE_SQL)
-        .bind(after_row_id)
-        .bind(upper_bound)
-        .bind(upper_bound)
-        .bind(i64::from(limit.get()))
-        .fetch_all(executor)
-        .await
-        .map_err(|source| PageError::sql("read event page", source))?;
+    let rows = match (tenant_id, upper_bound) {
+        (Some(tenant_id), Some(upper)) => {
+            query_as::<_, DurableRow>(SCOPED_PAGE_SNAPSHOT_SQL)
+                .bind(after_row_id)
+                .bind(upper)
+                .bind(tenant_id.as_str())
+                .bind(i64::from(limit.get()))
+                .fetch_all(executor)
+                .await
+        }
+        (Some(tenant_id), None) => {
+            query_as::<_, DurableRow>(SCOPED_PAGE_SQL)
+                .bind(after_row_id)
+                .bind(tenant_id.as_str())
+                .bind(i64::from(limit.get()))
+                .fetch_all(executor)
+                .await
+        }
+        (None, Some(upper)) => {
+            query_as::<_, DurableRow>(PAGE_SNAPSHOT_SQL)
+                .bind(after_row_id)
+                .bind(upper)
+                .bind(i64::from(limit.get()))
+                .fetch_all(executor)
+                .await
+        }
+        (None, None) => {
+            query_as::<_, DurableRow>(PAGE_SQL)
+                .bind(after_row_id)
+                .bind(i64::from(limit.get()))
+                .fetch_all(executor)
+                .await
+        }
+    }
+    .map_err(|source| PageError::sql("read event page", source))?;
     rows.into_iter()
         .map(hydrate_page)
         .collect::<Result<Vec<_>, _>>()
         .map_err(PageError::serialization)
 }
 
-const PAGE_SQL: &str = "SELECT e.row_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_events AS e LEFT JOIN dovecote_deliveries AS d ON d.event_row_id = e.row_id WHERE e.row_id > ? AND (? IS NULL OR e.row_id <= ?) ORDER BY e.row_id ASC LIMIT ?";
+const PAGE_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_events AS e LEFT JOIN dovecote_deliveries AS d ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id WHERE e.row_id > ? ORDER BY e.row_id ASC LIMIT ?";
+const PAGE_SNAPSHOT_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_events AS e LEFT JOIN dovecote_deliveries AS d ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id WHERE e.row_id > ? AND e.row_id <= ? ORDER BY e.row_id ASC LIMIT ?";
+const SCOPED_PAGE_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_events AS e LEFT JOIN dovecote_deliveries AS d ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id WHERE e.row_id > ? AND e.tenant_id = ? ORDER BY e.row_id ASC LIMIT ?";
+const SCOPED_PAGE_SNAPSHOT_SQL: &str = "SELECT e.row_id, e.tenant_id, e.stream, e.specversion, e.event_id, e.source, e.event_type, e.subject, e.occurred_at, e.enqueued_at, e.datacontenttype, e.dataschema, e.partitionkey, e.extensions, e.data_kind, e.data, d.state, d.available_at, d.attempts, d.claim_token, d.claimed_by, d.claim_expires_at, d.last_failure_code, d.last_failure_detail, d.delivered_at, d.quarantined_at, d.quarantine_reason FROM dovecote_events AS e LEFT JOIN dovecote_deliveries AS d ON d.tenant_id = e.tenant_id AND d.event_row_id = e.row_id WHERE e.row_id > ? AND e.row_id <= ? AND e.tenant_id = ? ORDER BY e.row_id ASC LIMIT ?";

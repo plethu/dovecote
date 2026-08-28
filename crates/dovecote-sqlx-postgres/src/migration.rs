@@ -3,7 +3,7 @@
 use sqlx::FromRow;
 
 /// Schema version adapters compare before using these migration artifacts.
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// Numeric crate version used to evaluate migration compatibility without
 /// parsing free-form requirement strings.
@@ -15,6 +15,7 @@ pub struct CrateVersion {
 }
 
 impl CrateVersion {
+    /// Creates a comparable semantic version from numeric components.
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -23,14 +24,17 @@ impl CrateVersion {
         }
     }
 
+    /// Returns the major component.
     pub const fn major(self) -> u16 {
         self.major
     }
 
+    /// Returns the minor component.
     pub const fn minor(self) -> u16 {
         self.minor
     }
 
+    /// Returns the patch component.
     pub const fn patch(self) -> u16 {
         self.patch
     }
@@ -92,6 +96,7 @@ impl MigrationCompatibility {
         Self { minimum, maximum }
     }
 
+    /// Constructs a compatibility range, rejecting a maximum below its minimum.
     pub const fn try_new(
         minimum: CrateVersion,
         maximum: Option<CrateVersion>,
@@ -104,14 +109,17 @@ impl MigrationCompatibility {
         Ok(Self::new(minimum, maximum))
     }
 
+    /// Returns the minimum supported crate version.
     pub const fn minimum(self) -> CrateVersion {
         self.minimum
     }
 
+    /// Returns the optional maximum supported crate version.
     pub const fn maximum(self) -> Option<CrateVersion> {
         self.maximum
     }
 
+    /// Returns whether `version` falls within this inclusive range.
     pub const fn contains(self, version: CrateVersion) -> bool {
         !version.is_less_than(self.minimum)
             && match self.maximum {
@@ -146,30 +154,54 @@ impl Migration {
         }
     }
 
+    /// Returns the schema version represented by this migration.
     pub const fn version(self) -> u32 {
         self.version
     }
 
+    /// Returns the immutable SQL text shipped for this migration.
     pub const fn sql(self) -> &'static str {
         self.sql
     }
 
+    /// Returns the crate-version compatibility range for this migration.
     pub const fn compatibility(self) -> MigrationCompatibility {
         self.compatibility
     }
 
+    /// Returns whether this migration supports rolling deployment compatibility.
     pub const fn rolling_compatible(self) -> bool {
         self.rolling_compatible
     }
 }
 
-/// The migration sequence shipped with this adapter; entries are append-only.
+/// The clean-install migration sequence shipped with this adapter.
+///
+/// The version 1 artifact remains available as [`LEGACY_MIGRATION`] for the
+/// explicit prepare/backfill/activate upgrade route. It is intentionally not
+/// rewritten or silently upgraded in place.
 pub const MIGRATIONS: &[Migration] = &[Migration::new(
+    2,
+    include_str!("../migrations/0002_dovecote_tenant_baseline.sql"),
+    MigrationCompatibility::new(CrateVersion::new(0, 2, 0), None),
+    false,
+)];
+
+/// The immutable schema version 1 artifact used by pre-tenant deployments.
+pub const LEGACY_MIGRATION: Migration = Migration::new(
     1,
     include_str!("../migrations/0001_dovecote.sql"),
     MigrationCompatibility::new(CrateVersion::new(0, 1, 0), None),
     false,
-)];
+);
+
+/// SQL that adds nullable tenant columns to a version 1 deployment.
+pub const V1_TENANT_PREPARE_SQL: &str =
+    include_str!("../migrations/0002_dovecote_tenant_prepare.sql");
+
+/// SQL that validates an operator-owned backfill and activates version 2.
+pub const V1_TENANT_ACTIVATE_SQL: &str =
+    include_str!("../migrations/0002_dovecote_tenant_activate.sql");
 
 pub(crate) fn current_migration() -> Result<Migration, String> {
     MIGRATIONS
@@ -233,9 +265,11 @@ mod tests {
         assert!(!MIGRATIONS[0].sql().is_empty());
         assert_eq!(
             MIGRATIONS[0].compatibility().minimum(),
-            CrateVersion::new(0, 1, 0)
+            CrateVersion::new(0, 2, 0)
         );
         assert!(!MIGRATIONS[0].rolling_compatible());
+        assert_eq!(LEGACY_MIGRATION.version(), 1);
+        assert!(!LEGACY_MIGRATION.sql().is_empty());
         assert!(
             MIGRATIONS[0]
                 .compatibility()

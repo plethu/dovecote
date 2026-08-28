@@ -11,8 +11,10 @@ pub struct StructuredJsonProjection {
 }
 
 impl StructuredJsonProjection {
+    /// The CloudEvents structured JSON content type.
     pub const CONTENT_TYPE: &'static str = "application/cloudevents+json";
 
+    /// Returns the deterministic UTF-8 structured projection bytes.
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -28,14 +30,17 @@ pub struct BinaryProjection {
 }
 
 impl BinaryProjection {
+    /// Returns the exact event body, preserving absent versus empty data.
     pub fn body(&self) -> Option<&[u8]> {
         self.body.as_deref()
     }
 
+    /// Returns the optional event data content type.
     pub fn datacontenttype(&self) -> Option<&ContentType> {
         self.datacontenttype.as_ref()
     }
 
+    /// Iterates over ordered, transport-neutral CloudEvents context attributes.
     pub fn attributes(&self) -> impl Iterator<Item = (&str, &str)> {
         self.attributes
             .iter()
@@ -51,7 +56,7 @@ impl StoredEvent {
         })
     }
 
-    /// Produces transport-neutral binary fields for an adapter to bind to its protocol.
+    /// Produces transport-neutral binary fields for a binary-mode transport.
     pub fn binary(&self) -> BinaryProjection {
         BinaryProjection {
             body: self.data().map(|data| data.as_bytes().to_vec()),

@@ -32,3 +32,19 @@ Dovecote's storage contract does not provide tenant authorization, encryption,
 secret management, transport authentication, or retention policy. Reports
 about those boundaries should identify the application integration as well as
 the Dovecote crate so the right owner can respond.
+
+## Temporary MySQL RSA advisory exception
+
+The MySQL SQLx adapter enables SQLx's `mysql-rsa` feature so a non-TLS
+connection can complete `sha256_password` or full `caching_sha2_password`
+authentication. SQLx encrypts the password with the server's public key; this
+adapter does not accept private keys or perform RSA decryption or signing.
+
+RustSec `RUSTSEC-2023-0071` concerns timing leakage in RSA private-key
+operations, and no patched `rsa` release is currently available. The
+repository therefore carries a targeted cargo-deny exception for this one
+transitive SQLx path, rather than removing authentication support or ignoring
+the entire advisory set. Prefer TLS for deployed MySQL/MariaDB connections.
+Review this exception by 2026-12-31, and immediately when SQLx or `rsa` ships a
+replacement/fix, the authentication policy changes, or private-key RSA use is
+introduced; remove the exception at that review.

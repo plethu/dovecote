@@ -1,7 +1,7 @@
 # Operations and compatibility
 
 Dovecote is a storage library, not a migration runner or a worker service. This
-page is the deployment path for the first schema version; [SPEC.md](../SPEC.md)
+page is the deployment path for the current schema version; [SPEC.md](../SPEC.md)
 remains the normative contract. A database adapter is not release-advertised
 until its exact backend, CI, projection, migration, and independent-review
 evidence passes. CDC fixtures are required only for a separate CDC
@@ -9,7 +9,7 @@ advertisement; see the [support matrix](support-matrix.md).
 
 ## Install and verify the schema
 
-Each SQLx adapter publishes an append-only `MIGRATIONS` slice. The application
+Each SQLx adapter publishes migration artifacts. The application
 owns the migration transaction and must execute each artifact in order using
 its existing migration process. Do not apply a migration from library startup,
 and do not edit a published artifact in place.
@@ -20,9 +20,9 @@ invitation to repair tables or to continue with a guessed schema.
 
 | Backend | Migration and check | Installation boundary |
 | --- | --- | --- |
-| PostgreSQL | `dovecote_sqlx_postgres::MIGRATIONS`; `dovecote_sqlx_postgres::check_schema(&pool).await` | Creates the PostgreSQL schema marker and the two Dovecote domain tables. The marker is checked against the adapter's schema and crate compatibility metadata. |
+| PostgreSQL | `dovecote_sqlx_postgres::MIGRATIONS`; `dovecote_sqlx_postgres::check_schema(&pool).await` | Clean installs use schema v2 with required tenant columns. The marker is checked against the adapter's schema and crate compatibility metadata. |
 | MySQL or MariaDB | `dovecote_sqlx_mysql::MIGRATIONS`; `dovecote_sqlx_mysql::check_schema(&pool).await` | Detects the server family and verifies the exact dialect-sensitive shape. Both tables must be InnoDB. MySQL evidence does not cover MariaDB. |
-| SQLite | `dovecote_sqlx_sqlite::MIGRATIONS`; `dovecote_sqlx_sqlite::check_schema(&pool).await` | Creates only the two domain tables. Enable foreign keys on every connection. Use `SqliteDovecote::begin_write`/`begin_enqueue` for the caller transaction. |
+| SQLite | `dovecote_sqlx_sqlite::MIGRATIONS`; `dovecote_sqlx_sqlite::check_schema(&pool).await` | Creates the domain tables plus the schema marker. Enable foreign keys on every connection. Use `SqliteDovecote::for_tenant` and its `begin_write`/`begin_enqueue` for caller transactions. The database file is the security boundary. |
 
 The MySQL/MariaDB migration creates two validation triggers. The account that
 installs the schema therefore needs trigger DDL authority. On a MySQL server
@@ -32,17 +32,58 @@ deployment's replication policy. The ordinary application account does not
 need that setting merely to use an already-installed Dovecote schema.
 
 The SQL is available as `migration.sql()` on each public migration artifact.
-The application migration runner may need to split or execute the artifact
-according to its own backend rules; the adapter does not assume that one
-`sqlx::query` call can execute a multi-statement file. If Keepsake and Gatekeep
-share one application database, install the Dovecote schema once in that
-database and have both libraries use the same adapter boundary.
+For MySQL/MariaDB, execute the complete artifact through the raw/unprepared
+protocol (for SQLx, `sqlx::raw_sql`) so the trigger bodies are sent as one
+multi-statement request. The artifact deliberately contains no client-side
+`DELIMITER` directives: a MySQL or MariaDB command-line wrapper must supply
+those directives itself, while SQLx callers must not split the bytes on
+semicolons. Splitting would corrupt trigger bodies and semicolons in comments.
+The adapter does not assume that one `sqlx::query` call can execute a
+multi-statement file. If Keepsake and Gatekeep share one application database,
+install the Dovecote schema once in that database and have both libraries use
+the same adapter boundary.
+
+MySQL and MariaDB schema v2 enforce the tenant-scoped identity with the
+`dovecote_events_tenant_source_event_id` unique index over the internal,
+stored-generated `identity_key VARBINARY(2310)` column. The key is the exact
+length-prefixed byte encoding
+`len(tenant_id, 3 ASCII digits) || tenant_id || len(source, 4 ASCII digits) || source || event_id`.
+Its maximum is `3 + 255 + 4 + 2,048 = 2,310` bytes, below the 3,072-byte
+InnoDB index limit. Fixed prefixes make the encoding collision-free even for a
+direct SQL writer; application lookups continue to predicate on
+`tenant_id`, `source`, and `event_id`. The stable index name is also the
+duplicate-key classifier used by the adapter.
 
 Run `check_schema` after the migration and on every deployment. It verifies
 the tables, columns, defaults, indexes, constraints, foreign key, backend
 settings, and—on PostgreSQL—the schema marker. It never changes data. Keep
 database time in UTC and use the settings recorded for the exact backend in
 the [support matrix](support-matrix.md).
+
+### PostgreSQL tenant upgrade and handles
+
+The PostgreSQL v2 baseline is for clean tenant-aware installations. A v1
+deployment must run `V1_TENANT_PREPARE_SQL`, assign every event and delivery a
+validated tenant in an operator-owned backfill, verify that each pair agrees,
+then run `V1_TENANT_ACTIVATE_SQL`. Activation fails while any tenant is null;
+no default or guessed tenant is used. The v1 migration bytes remain available
+as `LEGACY_MIGRATION` and are not rewritten.
+
+Construct `PostgresDovecote::for_tenant(tenant_id)` for ordinary enqueue,
+import, finalization, claim, mutation, page, and snapshot operations.
+`PostgresDovecote::admin()` is an explicit privileged surface: writes and
+mutations name a tenant, while its page, snapshot, and claim operations span
+all tenants. Returned claimed and paged values include their tenant ID.
+`bind_tenant` and `RLS_PROFILE_SQL` provide an optional PostgreSQL RLS profile;
+RLS requires reviewed roles and a `BYPASSRLS` administrator, and never removes
+the adapter's predicates.
+
+MySQL/MariaDB and SQLite expose the same `for_tenant` and `admin` handle shape.
+Their adapters always apply tenant predicates but do not claim database RLS:
+use a separate MySQL/MariaDB database for the strongest boundary, and treat a
+SQLite file as the security boundary (one file per tenant for regulated
+isolation). Each v1 upgrade uses its adapter's explicit prepare, operator-owned
+backfill, and activation artifacts; no tenant is guessed.
 
 For an existing Keepsake deployment on MariaDB, do not replay Keepsake's
 immutable MySQL migrations on MariaDB 11.8. Stop writers and the legacy
@@ -128,12 +169,12 @@ Four versions are separate contracts:
 
 | Contract | First-release value | Changes require |
 | --- | --- | --- |
-| Rust crate semver | `0.1.1` | Normal Rust API compatibility and release notes. The initial MSRV is Rust 1.94. |
-| Durable schema | Version `1` | A forward-only migration, preceding-version fixtures, compatibility metadata, and an application migration plan. |
+| Rust crate semver | `0.2.0` | Normal Rust API compatibility and release notes. The initial MSRV is Rust 1.94. |
+| Durable schema | Version `2` for PostgreSQL | A forward-only migration, preceding-version fixtures, compatibility metadata, and an application migration plan. |
 | Tagged extension encoding | Version 1 encoding in the durable schema | Round-trip fixtures preserving abstract extension types and values. |
 | CloudEvents projection | CloudEvents 1.0-compatible deterministic output | Updated golden vectors, official v1.0.2 JSON Schema validation, external SDK parsing, and transport-binding validation when bytes or meaning change. |
 
-The schema version 1 migration metadata has a minimum crate floor of `0.1.0`
+The PostgreSQL schema version 2 migration metadata has a minimum crate floor of `0.2.0`
 and is not marked rolling-compatible. A deployment must therefore use a
 documented compatible crate/schema pair and a maintenance window whenever a schema change cannot
 tolerate old and new processes together. `check_schema` rejects a crate that
@@ -169,8 +210,9 @@ Graceful shutdown is a short, explicit sequence:
 
 Process termination after the drain interval uses ordinary lease expiry and
 reclaim. It does not require a hidden shutdown state. The resulting duplicate
-is expected and is deduplicated by the consumer's CloudEvents `source + id`
-identity.
+is expected and is deduplicated by the consumer's tenant-scoped CloudEvents
+identity policy: `(source + id)` within one tenant, plus its tenant routing
+domain when destinations are shared.
 
 SQLite has one writer. Its default `BusyConfig` waits at most 20 seconds per
 writer-lock operation (5 seconds, then three complete retries); deployments may
@@ -180,8 +222,12 @@ and restart reconciliation from a new snapshot.
 
 ## Signals and tracing
 
-Dovecote adds no telemetry runtime to the core crate. An integration should
-publish bounded, low-cardinality signals for:
+Dovecote adds no telemetry runtime to the core crate and exposes no status-query
+method. Applications own bounded, read-only operational SQL against the
+documented `dovecote_events` and `dovecote_deliveries` tables, including
+backend-specific time functions, parameters, permissions, and indexes. The
+`page` and snapshot APIs are event inspection/reconciliation tools, not status
+counters. An integration should publish bounded, low-cardinality signals for:
 
 - pending count and oldest pending age by stream;
 - claimed count, oldest claim age, and expired-lease count;
@@ -218,13 +264,34 @@ or special-category data in CloudEvents context, routing fields, worker names,
 failure summaries, quarantine reasons, or trace state. A payload still needs
 the application's access controls, encryption, and retention policy.
 
-Schema version 1 has no `tenant_id` and Dovecote does not authorize tenants.
-For database-enforced isolation, use separate databases or schemas and
-separately authorized pools, applying the Dovecote schema once in each
-boundary. A shared schema is appropriate only for a trusted producer/worker
-tier authorized to process all its rows. Stream filtering in application code
-is not tenant isolation, and tenants must not receive direct access to shared
-Dovecote tables.
+Schema version 2 carries a required validated `tenant_id` on both event and
+delivery rows for every adapter. Use an adapter's `for_tenant` handle for
+ordinary operations; its `admin` handle is an explicit privileged surface
+whose writes and mutations name a tenant. Claimed and paged values retain
+tenant metadata for safe routing. Durable identity is scoped to
+`(tenant_id, source, event_id)`, while the projected CloudEvents identity
+remains `(source, id)`. A destination shared by multiple tenants must partition
+its deduplication by tenant; a destination isolated to one tenant can
+deduplicate on `(source, id)`. PostgreSQL's optional `RLS_PROFILE_SQL` and `bind_tenant` helper
+supplement these predicates and require reviewed roles, including `BYPASSRLS`
+for admin. MySQL/MariaDB has no RLS claim and should use a separate database
+for the strongest boundary; SQLite's file is the security boundary and a file
+per tenant is the regulated-isolation choice. Version 1 upgrades require
+explicit prepare, operator-owned backfill, and activation; no tenant is
+guessed. Stream filtering in application code is never tenant isolation, and
+tenants must not receive direct access to shared Dovecote tables.
+
+Tenant assignment is an application trust decision. Dovecote validates the
+identifier and preserves it as storage metadata, but it does not authenticate
+the caller or decide tenant membership; only a trusted producer or an
+authorized administrative migration may choose it. The `(tenant_id, source,
+event_id)` tuple is the durable identity oracle within a tenant. Reusing the
+same source and event ID in another tenant creates a separate event and delivery
+row. With the optional PostgreSQL RLS profile, an unset or mismatched
+transaction-local tenant setting denies ordinary scoped access; it does not
+expand the handle's authority. RLS conflicts are expected to surface as the
+adapter's normal database error, and the application must use a separately
+authorized `BYPASSRLS` pool for explicit administrative operations.
 
 ## Retention and deletion
 

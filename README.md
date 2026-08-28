@@ -7,15 +7,17 @@
 `dovecote` is a transactional outbox for Rust applications. It writes a
 validated CloudEvents-compatible event in the same database transaction as
 application state, then keeps its delivery state for an application-owned
-worker.
+worker. In schema version 2, durable event identity is scoped to the tenant
+handle as `(tenant_id, source, id)`.
 
 Claims are leased, and delivery mutations require the matching claim token.
-Delivery is at least once, so consumers deduplicate on `(source, id)`. Dovecote
-does not run workers, choose transports, apply migrations, or promise FIFO or
-exactly-once delivery.
+Delivery is at least once. Consumers publishing multiple tenant domains through
+one destination must include their tenant routing domain in deduplication; a
+single tenant can use `(source, id)`. Dovecote does not run workers, choose
+transports, apply migrations, or promise FIFO or exactly-once delivery.
 
 > [!WARNING]
-> Dovecote is pre-release (`0.1.1`). Rust APIs, the durable schema, and migration
+> Dovecote is pre-release (`0.2.0`). Rust APIs, the durable schema, and migration
 > tooling may change before v1. Backend support is version-specific; see the
 > [support matrix](docs/support-matrix.md). Existing Keepsake deployments on
 > MariaDB use the documented [maintenance-window migration
@@ -27,7 +29,7 @@ Build the event, then enqueue it in the transaction that owns the application
 change:
 
 ```rust
-use dovecote::{ContentType, EventData, EventId, EventSource, EventType, NewEvent, StreamName};
+use dovecote::{ContentType, EventData, EventId, EventSource, EventType, NewEvent, StreamName, TenantId};
 use dovecote_sqlx_postgres::PostgresDovecote;
 use sqlx::PgPool;
 
@@ -42,7 +44,8 @@ async fn record(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
     .data(EventData::json(br#"{"ok":true}"#.to_vec())?)
     .build()?;
 
-    let adapter = PostgresDovecote::new(pool.clone());
+    let adapter = PostgresDovecote::new(pool.clone())
+        .for_tenant(TenantId::new("tenant-a")?);
     let mut transaction = pool.begin().await?;
     sqlx::query("INSERT INTO application_audit_log (event_id) VALUES ($1)")
         .bind("evt-123")
@@ -68,6 +71,8 @@ database's transaction, locking, clock, and migration behaviour explicit.
   [support matrix](docs/support-matrix.md) cover deployment and backend evidence.
 - [Integration mappings](docs/integrations.md) cover HTTP, Kafka, NATS
   JetStream, Azure Event Grid, and Debezium boundaries.
+- [1.0 readiness](docs/1.0-readiness.md) records the release gates, non-goals,
+  and versioning policy.
 - The [Keepsake and Gatekeep migration
   runbook](docs/migrations/keepsake-gatekeep.md) covers paused and rolling
   cutovers, including the MariaDB maintenance-window route.

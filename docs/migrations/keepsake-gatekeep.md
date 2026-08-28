@@ -48,6 +48,11 @@ gatekeep-audit-legacy-<legacy decision row id>
 ```
 
 The source plus this ID is stable across retries and resumptions.
+The importer must also provide the owning Dovecote `tenant_id` explicitly:
+durable identity is `(tenant_id, source, event_id)`, so this source/ID mapping
+is unique within that tenant. If one migration or downstream destination serves
+multiple tenants, retain that tenant routing context alongside the imported
+event; Dovecote does not add it to the projected CloudEvents identity.
 
 Keep four independent source cursors and four captured high-water marks:
 Keepsake audit rows, Keepsake outbox rows, Gatekeep decision-audit rows, and
@@ -72,7 +77,12 @@ bytes into Dovecote. A database cast that reformats JSON between digest and
 insert is not acceptable. For a normalized row without a payload, call only
 the owning project's documented versioned migration codec; its deterministic
 output is a reconstruction and must not be labelled as an original database
-byte sequence.
+byte sequence. The complete-history fixture's independent
+`tests/fixtures/reconstructed-payload-golden-v1.json` records the four v1
+reference outputs and their digests. The current 3.0 sibling crates no longer
+export those retired codecs, so the fixture compares normalized source values
+and the recorded digest rather than silently treating its checked-in payload
+as a newly generated current-project value.
 
 The application passes the resulting validated `dovecote::NewEvent` to the
 adapter's `import_for_migration` operation in the same caller-owned
@@ -91,17 +101,26 @@ row is a typed conflict. This finalizer is migration infrastructure, not
 ordinary application acknowledgement, and the caller retains commit/rollback
 control.
 
-### Planned 2.0 occurrence-time mapping
+### Current 3.0 occurrence-time mapping
 
-Until sibling implementations are evidenced, the 2.0 producer mapping remains
-planned:
+The 3.0 producers establish the audit identity before durable enqueue and reuse
+it when retrying the same logical operation. Keepsake's `AuditEventId` and
+Gatekeep's `DecisionAuditId` are producer-owned identities, not database row
+IDs or delivery cursors. The adapters map them to the following Dovecote
+values:
 
-| 2.0 producer value | Dovecote and CloudEvents mapping |
+| Producer value | Dovecote and CloudEvents mapping |
 |---|---|
-| Keepsake `AuditEvent.at` | Will continue to map to `occurred_at` and CloudEvents `time`. |
-| Gatekeep 2.0 explicit decision-time captured authoritatively at the audit/orchestration boundary | Will map to `occurred_at` and CloudEvents `time`. |
-| Clock access inside deterministic Gatekeep policy evaluation | Will remain absent; the evaluation will not read a clock. |
-| Database `created_at`, `recorded_at`, and `enqueued_at` | Will remain persistence times and must not substitute for occurrence time. |
+| Keepsake `AuditEvent.id` | `event_id = keepsake-audit-<UUID>`; the same ID is reused across retries. |
+| Keepsake `AuditEvent.at` | `occurred_at` and CloudEvents `time`. |
+| Gatekeep `DecisionAuditOccurrence.decision_audit_id` | `event_id = gatekeep-audit-<DecisionAuditId>`; a caller-supplied occurrence is retained across retries. |
+| Gatekeep `DecisionAuditOccurrence.occurred_at` | `occurred_at` and CloudEvents `time`. |
+| Gatekeep's application-owned `Clock` | The same clock governs context validation, fact observation, decision receipt/freshness checks, and generated audit occurrences at the Axum boundary. Explicit occurrences remain authoritative. |
+| Database `created_at`, `recorded_at`, and `enqueued_at` | Persistence times only; they must not substitute for occurrence time. |
+
+Policy evaluation itself remains clock-free. A 1.x historical row without a
+current producer identity still uses the migration-only IDs documented above;
+that compatibility mapping is separate from the current 3.0 event identity.
 
 Every legacy audit occurrence through the recorded high-water mark is copied,
 including rows without an outbox payload and delivered history. Never trust a legacy claim across the cutover: it
@@ -233,7 +252,7 @@ The supported route is:
    activation. Any delta stops the cutover; it is not silently skipped.
 6. Run Keepsake 2.0's explicit `upgrade_migrate()` and
    `activate_upgrade()`, then deploy the Dovecote-only writer and start its one
-   publication owner for the stream. Keep the legacy publisher stopped. Retain
+   publication owner for the Dovecote table set. Keep the legacy publisher stopped. Retain
    the Keepsake tables and the exported ledger read-only through the rollback
    and consumer deduplication windows; later deletion is a separate,
    explicitly approved cleanup.
@@ -351,9 +370,9 @@ evidence item; an absent item blocks the next step.
    **Evidence:** configuration review and an atomic test showing that a
    rollback removes both forms.
 4. **Keep legacy publication ownership.** Do not start Dovecote workers or a
-   Dovecote CDC publication for these streams. Legacy workers remain the only
+   Dovecote CDC publication for this table set. Legacy workers remain the only
    publishers while dual writes accumulate pending Dovecote deliveries.
-   **Evidence:** worker/connector inventory, stream-owner record, and a query
+   **Evidence:** worker/connector inventory, table-set publication-owner record, and a query
    showing bridge deliveries are pending rather than claimed for publication.
 5. **Run a bounded high-water complete-history import.** Capture an inclusive
    high-water mark for each legacy source table—Keepsake audit and outbox plus
@@ -406,9 +425,11 @@ evidence item; an absent item blocks the next step.
     publisher's final acknowledgement ledger for rollback/reconciliation.
     **Evidence:** stop/fence timestamp, last legacy claim and acknowledgement,
     and no active legacy publisher process.
-13. **Switch stream ownership to Dovecote.** Start exactly one Dovecote
-    publication owner per stream: a leased worker or an explicitly advertised
-    CDC path, never both. Dovecote may now claim and publish pending rows.
+13. **Switch publication ownership to Dovecote.** Start exactly one Dovecote
+    publication owner for the table set: a leased worker or an explicitly
+    advertised CDC path, never both. Because claims are all-stream, Dovecote
+    cannot safely split publication modes by stream. Dovecote may now claim and
+    publish pending rows.
     **Evidence:** owner configuration, first successful Dovecote claim and
     acknowledgement, and monitoring for lost claims/retries/quarantine.
 14. **Deploy Dovecote-only 2.0 writers.** Disable the 1.x bridge and deploy
@@ -476,5 +497,6 @@ Record these artifacts with the release review:
 - the date on which migration-only code and old rows may be reconsidered.
 
 The legacy outbox is not a second publication owner after cutover. Keep one
-owner per stream and follow [SPEC section 12](../../SPEC.md#12-keepsake-and-gatekeep-migration)
+owner for the Dovecote table set and follow
+[SPEC section 12](../../SPEC.md#12-keepsake-and-gatekeep-migration)
 for the full contract.

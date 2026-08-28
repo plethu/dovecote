@@ -1,0 +1,58 @@
+{
+  "schema": "dovecote-reconstructed-payload-golden/v1",
+  "reference": {
+    "keepsake": {
+      "repository": "plethu/keepsake",
+      "commit": "b5d1c1fdebb19164c0c569c75f3a2e21c1c667fc",
+      "implementation": "crates/keepsake-sqlx/src/repository/dovecote_bridge.rs",
+      "codec_name": "keepsake.audit.json",
+      "codec_version": "v1"
+    },
+    "gatekeep": {
+      "repository": "plethu/gatekeep",
+      "commit": "d7450f2c02e2510da38c5e66e5e55954c3005bd6",
+      "implementation": "crates/gatekeep-sqlx/src/audit/bridge.rs",
+      "codec_name": "gatekeep-audit-json",
+      "codec_version": "v1"
+    }
+  },
+  "source_row_digest_scope": "Keepsake LegacyAuditEventV1 input JSON (field order below); Gatekeep normalized entry JSON",
+  "occurrences": [
+    {
+      "project": "keepsake",
+      "source_id": 100,
+      "codec_name": "keepsake.audit.json",
+      "codec_version": "v1",
+      "fixture_codec_version": "keepsake.audit.json.v1",
+      "source_row_sha256": "e9bf3699e6709ac3fe162b71a61379bdcb4fcd6940c7776d92c3a5626db7e0cf",
+      "canonical_payload_sha256": "0eead4b61c1acc958915e2a1696bb5e11afe28acc5b4846fb5f24a24c8b7c725"
+    },
+    {
+      "project": "gatekeep",
+      "source_id": 100,
+      "codec_name": "gatekeep-audit-json",
+      "codec_version": "v1",
+      "fixture_codec_version": "gatekeep-audit-json-v1",
+      "source_row_sha256": "38657e1751abe714624d81c9c1f5f79ee12e775f772cb3e3fee24821a9c42211",
+      "canonical_payload_sha256": "38657e1751abe714624d81c9c1f5f79ee12e775f772cb3e3fee24821a9c42211"
+    },
+    {
+      "project": "gatekeep",
+      "source_id": 200,
+      "codec_name": "gatekeep-audit-json",
+      "codec_version": "v1",
+      "fixture_codec_version": "gatekeep-audit-json-v1",
+      "source_row_sha256": "a393c9d5eaae2b04a12f5670dd95a8f926f01c5143ac6fcd5e26274f0bee7474",
+      "canonical_payload_sha256": "a393c9d5eaae2b04a12f5670dd95a8f926f01c5143ac6fcd5e26274f0bee7474"
+    },
+    {
+      "project": "gatekeep",
+      "source_id": 500,
+      "codec_name": "gatekeep-audit-json",
+      "codec_version": "v1",
+      "fixture_codec_version": "gatekeep-audit-json-v1",
+      "source_row_sha256": "718eba53da7a9f41b68092194c0307b69d09ddc0d9c0a49b032fdec3db84b04f",
+      "canonical_payload_sha256": "718eba53da7a9f41b68092194c0307b69d09ddc0d9c0a49b032fdec3db84b04f"
+    }
+  ]
+}

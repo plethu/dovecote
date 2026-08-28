@@ -32,8 +32,38 @@ ensure_codec_source() {
     ln -s "${default_source}" "${path}"
 }
 
-ensure_codec_source keepsake "${keepsake_root}" "${repo_root}/../.worktrees/keepsake-dovecote-bridge"
-ensure_codec_source gatekeep "${gatekeep_root}" "${repo_root}/../.worktrees/gatekeep-dovecote-bridge"
+# CI supplies reviewed bridge checkouts at the paths above.  For a local
+# release-candidate proof, the sibling 3.0 checkouts are the reproducible
+# fallback; their historical migration files are still checked against the
+# vendored SHA-256 manifest below.
+ensure_codec_source keepsake "${keepsake_root}" "${repo_root}/../keepsake-rs"
+ensure_codec_source gatekeep "${gatekeep_root}" "${repo_root}/../gatekeep-rs"
+
+# Gatekeep's release-candidate workspace names Keepsake through a sibling
+# `../keepsake-rs` path. CI checks out both projects under the fixture's
+# `sibling-worktrees` directory, so provide that exact ignored alias when the
+# lexical Gatekeep checkout does not already have its expected sibling.
+temporary_keepsake_alias=""
+# Resolve this lexically: Cargo resolves Gatekeep's `../keepsake-rs` relative
+# to the manifest path supplied to it, even when that manifest is reached via
+# a symlink.  Using pwd -P here would create the alias beside the real source
+# checkout and leave the lexical fixture layout broken.
+keepsake_expected_by_gatekeep="$(dirname "${gatekeep_root}")/keepsake-rs"
+if [[ ! -f "${keepsake_expected_by_gatekeep}/crates/keepsake/Cargo.toml" ]]; then
+    if [[ -e "${keepsake_expected_by_gatekeep}" || -L "${keepsake_expected_by_gatekeep}" ]]; then
+        echo "Gatekeep's expected Keepsake sibling is not a usable checkout: ${keepsake_expected_by_gatekeep}" >&2
+        exit 1
+    fi
+    ln -s "${keepsake_root}" "${keepsake_expected_by_gatekeep}"
+    temporary_keepsake_alias="${keepsake_expected_by_gatekeep}"
+fi
+
+cleanup_fixture_alias() {
+    if [[ -n "${temporary_keepsake_alias}" && -L "${temporary_keepsake_alias}" ]]; then
+        rm -f -- "${temporary_keepsake_alias}"
+    fi
+}
+trap cleanup_fixture_alias EXIT
 
 # The bridge manifests resolve their local Dovecote dependency through a
 # sibling named `carrier`. Keep that path valid both for local worktrees and
@@ -68,6 +98,11 @@ The source-ready invocation does not apply any historical migration.
 For MySQL-family clients, set MYSQL_ARGS to the normal mysql CLI connection
 arguments (for example: --host=127.0.0.1 --user=test --password=test test).
 DATABASE_URL is passed separately to the SQLx runner.
+
+For local release-candidate checkouts, keep the defaults (../keepsake-rs and
+../gatekeep-rs) or set KEEPSAKE_ROOT and GATEKEEP_ROOT explicitly. CI retains
+its reviewed 40-hex bridge-SHA requirement and is not satisfied by these
+local fallbacks.
 EOF
 }
 
@@ -262,7 +297,7 @@ SQL
 
 run_sqlite() {
     db="$(mktemp "${TMPDIR:-/tmp}/dovecote-history.XXXXXX.db")"
-    trap 'rm -f -- "${db}" "${db}.ledger.jsonl" "${db}.ledger.jsonl.progress"' EXIT
+    trap 'rm -f -- "${db}" "${db}.ledger.jsonl" "${db}.ledger.jsonl.progress"; cleanup_fixture_alias' EXIT
     DOVECOTE_FIXTURE_LEDGER="${db}.ledger.jsonl"
 
     # Install the actual published schemas in order.  None of these files is
@@ -274,7 +309,7 @@ run_sqlite() {
     done
     sqlite3 "${db}" < "$(migration_file gatekeep sqlite 0001_audit.sql)"
     sqlite3 "${db}" < "${fixture_root}/seed-sqlite-initial-v1.sql"
-    sqlite3 "${db}" < "${repo_root}/crates/dovecote-sqlx-sqlite/migrations/0001_dovecote.sql"
+    sqlite3 "${db}" < "${repo_root}/crates/dovecote-sqlx-sqlite/migrations/0002_dovecote_tenant_baseline.sql"
 
     # Active claims are observed before cutover and explicitly fenced.  The
     # importer only receives portable Pending/Delivered states; no old token
@@ -336,7 +371,7 @@ sql_apply_postgres() {
     done
     psql "${url}" --set ON_ERROR_STOP=1 --file "$(migration_file gatekeep postgres 0001_audit.sql)" >/dev/null
     psql "${url}" --set ON_ERROR_STOP=1 --file "${fixture_root}/seed-postgres-v1.sql" >/dev/null
-    psql "${url}" --set ON_ERROR_STOP=1 --file "${repo_root}/crates/dovecote-sqlx-postgres/migrations/0001_dovecote.sql" >/dev/null
+    psql "${url}" --set ON_ERROR_STOP=1 --file "${repo_root}/crates/dovecote-sqlx-postgres/migrations/0002_dovecote_tenant_baseline.sql" >/dev/null
     keepsake_claim="$(psql "${url}" --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT claimed_by || '|' || to_char(claimed_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM keepsake_audit_outbox WHERE id = 102 AND claimed_until > clock_timestamp();")"
     gatekeep_claim="$(psql "${url}" --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT claimed_by || '|' || to_char(claimed_until AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS.US\"Z\"') FROM gatekeep_audit_outbox WHERE id = 202 AND claimed_until > clock_timestamp();")"
     [[ "${keepsake_claim}" == "legacy-worker|2037-01-01T00:00:00.000000Z" ]]

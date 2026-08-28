@@ -7,8 +7,9 @@ SPEC section 10.5. It is deliberately not a Kafka Connect or Debezium runner.
 The model declares the converter shape `dovecote-json-envelope-base64-v1`:
 record headers carry the router's `id` and `type`, the CloudEvents context, and
 `content-type`, while one converter-owned value envelope contains `payload`
-plus only `dovecote_extensions`, `dovecote_data_kind`, `dovecote_row_id`, and
-`dovecote_enqueued_at`. Under this fixture's JSON-converter assumption,
+plus `dovecote_tenant_id`, `dovecote_extensions`, `dovecote_data_kind`,
+`dovecote_row_id`, and `dovecote_enqueued_at`. Under this fixture's
+JSON-converter assumption,
 `payload` is a base64 string so binary bytes remain exact. This is an explicit
 fixture assumption, not a claim about the default output of every Debezium
 converter.

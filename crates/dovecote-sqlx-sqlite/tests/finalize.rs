@@ -2,23 +2,12 @@ use dovecote::{
     EventId, EventSource, EventType, FinalizeOutcome, ImportedDeliveryState, NewEvent, RowId,
     StreamName,
 };
-use dovecote_sqlx_sqlite::{FinalizeError, MIGRATIONS, SqliteDovecote, check_schema};
-use sqlx::{SqlitePool, query, query_as, query_scalar, raw_sql, sqlite::SqlitePoolOptions};
+use dovecote_sqlx_sqlite::{FinalizeError, SqliteDovecote, TenantDovecote};
+use sqlx::{query, query_as, query_scalar};
 use time::{OffsetDateTime, UtcOffset};
 
-async fn database() -> SqlitePool {
-    let pool = SqlitePoolOptions::new()
-        .max_connections(1)
-        .connect("sqlite::memory:")
-        .await
-        .expect("SQLite pool");
-    raw_sql(MIGRATIONS[0].sql())
-        .execute(&pool)
-        .await
-        .expect("Dovecote migration");
-    check_schema(&pool).await.expect("Dovecote schema");
-    pool
-}
+mod support;
+use support::database;
 
 fn event(id: &str) -> NewEvent {
     NewEvent::new(
@@ -30,7 +19,7 @@ fn event(id: &str) -> NewEvent {
     .unwrap()
 }
 
-async fn imported_pending(adapter: &SqliteDovecote, id: &str) -> RowId {
+async fn imported_pending(adapter: &TenantDovecote, id: &str) -> RowId {
     let mut transaction = adapter.begin_write().await.unwrap();
     let outcome = adapter
         .import_for_migration(
@@ -56,7 +45,8 @@ fn delivery_timestamp(seconds: i64) -> OffsetDateTime {
 #[tokio::test]
 async fn finalization_is_authoritative_and_idempotent() {
     let pool = database().await;
-    let adapter = SqliteDovecote::new(pool.clone());
+    let adapter =
+        SqliteDovecote::new(pool.clone()).for_tenant(dovecote::TenantId::new("test").unwrap());
     let row_id = imported_pending(&adapter, "finalize").await;
     let delivered_at = delivery_timestamp(123);
 
@@ -147,7 +137,8 @@ async fn only_canonical_pending_state_can_be_finalized() {
         ),
     ] {
         let pool = database().await;
-        let adapter = SqliteDovecote::new(pool.clone());
+        let adapter =
+            SqliteDovecote::new(pool.clone()).for_tenant(dovecote::TenantId::new("test").unwrap());
         let row_id = imported_pending(&adapter, id).await;
         query(mutation)
             .bind(row_id.get())
@@ -174,7 +165,8 @@ async fn only_canonical_pending_state_can_be_finalized() {
 #[tokio::test]
 async fn finalization_requires_write_transaction_and_supports_rollback() {
     let pool = database().await;
-    let adapter = SqliteDovecote::new(pool.clone());
+    let adapter =
+        SqliteDovecote::new(pool.clone()).for_tenant(dovecote::TenantId::new("test").unwrap());
     let row_id = imported_pending(&adapter, "rollback").await;
 
     let mut deferred = pool.begin().await.unwrap();
@@ -205,7 +197,8 @@ async fn finalization_requires_write_transaction_and_supports_rollback() {
 #[tokio::test]
 async fn invalid_timestamp_and_schema_mismatch_happen_before_mutation() {
     let pool = database().await;
-    let adapter = SqliteDovecote::new(pool.clone());
+    let adapter =
+        SqliteDovecote::new(pool.clone()).for_tenant(dovecote::TenantId::new("test").unwrap());
     let row_id = imported_pending(&adapter, "invalid").await;
     let invalid = OffsetDateTime::UNIX_EPOCH.replace_nanosecond(1).unwrap();
     let mut transaction = adapter.begin_write().await.unwrap();
@@ -243,7 +236,7 @@ async fn invalid_timestamp_and_schema_mismatch_happen_before_mutation() {
 #[tokio::test]
 async fn missing_event_is_typed_not_found() {
     let pool = database().await;
-    let adapter = SqliteDovecote::new(pool);
+    let adapter = SqliteDovecote::new(pool).for_tenant(dovecote::TenantId::new("test").unwrap());
     let row_id = RowId::new(999).unwrap();
     let mut transaction = adapter.begin_write().await.unwrap();
     let result = adapter

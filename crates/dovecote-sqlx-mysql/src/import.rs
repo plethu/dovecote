@@ -6,12 +6,14 @@
 
 use crate::{
     enqueue::{ExistingEvent, database_datetime, same_event, validate_existing_event},
-    error::{EnqueueError, ImportError},
+    error::{EnqueueError, ImportError, is_tenant_source_event_id_duplicate},
     schema::check_schema_connection,
 };
-use dovecote::{ImportOutcome, ImportedDeliveryState, NewEvent, RowId};
+use dovecote::{ImportOutcome, ImportedDeliveryState, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, MySql, Transaction, query, query_as, query_scalar};
 use time::{OffsetDateTime, PrimitiveDateTime};
+
+const MAX_RECORD_CHANGED_RETRIES: u8 = 3;
 
 /// Imports one event and a portable legacy delivery state in the supplied
 /// transaction. The caller remains responsible for commit or rollback.
@@ -22,8 +24,9 @@ use time::{OffsetDateTime, PrimitiveDateTime};
 /// quarantines are not importable.
 /// An active legacy claim must finish, expire, or be explicitly fenced before
 /// the caller maps that source row to `Pending`.
-pub async fn import_for_migration<'c>(
+pub(crate) async fn import_for_scope<'c>(
     transaction: &mut Transaction<'c, MySql>,
+    tenant_id: &TenantId,
     event: NewEvent,
     state: ImportedDeliveryState,
 ) -> Result<ImportOutcome, ImportError> {
@@ -51,12 +54,13 @@ pub async fn import_for_migration<'c>(
     let inserted = match query(
         r#"
         INSERT INTO dovecote_events
-            (stream, specversion, event_id, source, event_type, subject,
+            (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
              data_kind, data, enqueued_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
+    .bind(tenant_id.as_str().as_bytes())
     .bind(event.stream().as_str().as_bytes())
     .bind(event.specversion().as_bytes())
     .bind(event.id().as_str().as_bytes())
@@ -79,40 +83,61 @@ pub async fn import_for_migration<'c>(
     .await
     {
         Ok(_) => true,
-        Err(source)
-            if source
-                .as_database_error()
-                .is_some_and(|error| error.is_unique_violation()) =>
-        {
-            false
-        }
+        Err(source) if is_tenant_source_event_id_duplicate(&source) => false,
         Err(source) => return Err(ImportError::sql("insert imported event", source)),
     };
 
-    let existing = query_as::<_, ExistingEvent>(
-        r#"
-        SELECT row_id, stream, specversion, event_id, source, event_type,
-               subject, occurred_at, datacontenttype, dataschema,
-               partitionkey, extensions, data_kind, data, enqueued_at
-        FROM dovecote_events
-        WHERE source = ? AND event_id = ?
-        "#,
-    )
-    .bind(event.source().as_str().as_bytes())
-    .bind(event.id().as_str().as_bytes())
-    .fetch_optional(&mut **transaction)
-    .await
-    .map_err(|source| ImportError::sql("find imported event", source))?
-    .ok_or_else(|| {
-        ImportError::sql(
-            "resolve imported event",
-            sqlx::Error::Protocol("identity insert returned no row".to_owned()),
-        )
-    })?;
+    let existing = {
+        let mut retries = 0;
+        loop {
+            let result = query_as::<_, ExistingEvent>(
+                r#"
+                SELECT row_id, stream, specversion, event_id, source, event_type,
+                       subject, occurred_at, datacontenttype, dataschema,
+                       partitionkey, extensions, data_kind, data, enqueued_at
+                FROM dovecote_events
+                WHERE tenant_id = ? AND source = ? AND event_id = ?
+                FOR UPDATE
+                "#,
+            )
+            .bind(tenant_id.as_str().as_bytes())
+            .bind(event.source().as_str().as_bytes())
+            .bind(event.id().as_str().as_bytes())
+            .fetch_optional(&mut **transaction)
+            .await;
+            match result {
+                Ok(Some(existing)) => break existing,
+                Ok(None) => {
+                    return Err(ImportError::sql(
+                        "resolve imported event",
+                        sqlx::Error::Protocol("identity insert returned no row".to_owned()),
+                    ));
+                }
+                // MariaDB may briefly reject the locking read with 1020 after
+                // the competing duplicate-key insert releases its lock. A
+                // bounded retry keeps the caller's transaction intact; if it
+                // persists, `ImportError::sql` classifies it as retryable.
+                Err(source)
+                    if is_record_changed_since_read(&source)
+                        && retries < MAX_RECORD_CHANGED_RETRIES =>
+                {
+                    retries += 1;
+                }
+                Err(source) => return Err(ImportError::sql("find imported event", source)),
+            }
+        }
+    };
     let existing_id = row_id(existing.row_id)?;
 
     if inserted {
-        insert_delivery(transaction, existing.row_id, operation_time, state).await?;
+        insert_delivery(
+            transaction,
+            tenant_id,
+            existing.row_id,
+            operation_time,
+            state,
+        )
+        .await?;
         return Ok(ImportOutcome::Imported {
             row_id: existing_id,
         });
@@ -131,9 +156,11 @@ pub async fn import_for_migration<'c>(
                last_failure_code, last_failure_detail, delivered_at,
                quarantined_at, quarantine_reason, available_at
         FROM dovecote_deliveries
-        WHERE event_row_id = ?
+        WHERE tenant_id = ? AND event_row_id = ?
+        FOR UPDATE
         "#,
     )
+    .bind(tenant_id.as_str().as_bytes())
     .bind(existing.row_id)
     .fetch_optional(&mut **transaction)
     .await
@@ -155,6 +182,7 @@ pub async fn import_for_migration<'c>(
 
 async fn insert_delivery<'c>(
     transaction: &mut Transaction<'c, MySql>,
+    tenant_id: &TenantId,
     event_row_id: i64,
     operation_time: OffsetDateTime,
     state: ImportedDeliveryState,
@@ -172,8 +200,9 @@ async fn insert_delivery<'c>(
         }
     };
     query(
-        "INSERT INTO dovecote_deliveries (event_row_id, state, available_at, attempts, delivered_at) VALUES (?, ?, ?, 0, ?)",
+        "INSERT INTO dovecote_deliveries (tenant_id, event_row_id, state, available_at, attempts, delivered_at) VALUES (?, ?, ?, ?, 0, ?)",
     )
+    .bind(tenant_id.as_str().as_bytes())
     .bind(event_row_id)
     .bind(state_name)
     .bind(operation_time)
@@ -204,15 +233,20 @@ fn delivery_matches(
     state: ImportedDeliveryState,
     enqueued_at: PrimitiveDateTime,
 ) -> Result<bool, ImportError> {
-    let canonical = row.attempts == 0
-        && row.claim_token.is_none()
-        && row.claimed_by.is_none()
-        && row.claim_expires_at.is_none()
-        && row.last_failure_code.is_none()
-        && row.last_failure_detail.is_none()
-        && row.quarantined_at.is_none()
-        && row.quarantine_reason.is_none()
-        && row.available_at == enqueued_at;
+    let canonical = crate::delivery_state::is_canonical_delivery_shape(
+        crate::delivery_state::DeliveryShape {
+            attempts: row.attempts,
+            claim_token: row.claim_token.as_deref(),
+            claimed_by: row.claimed_by.as_deref(),
+            claim_expires_at: row.claim_expires_at,
+            last_failure_code: row.last_failure_code.as_deref(),
+            last_failure_detail: row.last_failure_detail.as_deref(),
+            quarantined_at: row.quarantined_at,
+            quarantine_reason: row.quarantine_reason.as_deref(),
+            available_at: row.available_at,
+        },
+        enqueued_at,
+    );
     Ok(match state {
         ImportedDeliveryState::Pending => {
             canonical && row.state == b"pending" && row.delivered_at.is_none()
@@ -232,6 +266,14 @@ fn delivery_matches(
 
 fn row_id(value: i64) -> Result<RowId, ImportError> {
     RowId::new(value).map_err(|error| ImportError::serialization(error.to_string()))
+}
+
+fn is_record_changed_since_read(source: &sqlx::Error) -> bool {
+    source.as_database_error().and_then(|error| {
+        error
+            .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
+            .map(|error| error.number())
+    }) == Some(1020)
 }
 
 fn map_enqueue_error(error: EnqueueError) -> ImportError {

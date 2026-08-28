@@ -8,7 +8,9 @@ use sqlx::{FromRow, MySqlConnection, MySqlPool, query_as};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BackendKind {
+    /// Oracle MySQL.
     MySql,
+    /// MariaDB.
     MariaDb,
 }
 
@@ -22,6 +24,7 @@ pub struct ServerVersion {
 }
 
 impl ServerVersion {
+    /// Creates a server version from its numeric components.
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
             major,
@@ -29,12 +32,15 @@ impl ServerVersion {
             patch,
         }
     }
+    /// Returns the major component.
     pub const fn major(self) -> u32 {
         self.major
     }
+    /// Returns the minor component.
     pub const fn minor(self) -> u32 {
         self.minor
     }
+    /// Returns the patch component.
     pub const fn patch(self) -> u32 {
         self.patch
     }
@@ -42,18 +48,27 @@ impl ServerVersion {
 
 /// Capabilities selected from a verified family and release.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct Capabilities {
+    /// Whether SKIP LOCKED is available.
     pub skip_locked: bool,
+    /// Whether the server enforces CHECK constraints.
     pub enforced_checks: bool,
+    /// Whether repeatable-read snapshots are supported.
     pub repeatable_read_snapshot: bool,
 }
 
 /// Verified connection identity and SQL capability set.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
 pub struct BackendInfo {
+    /// Detected server family.
     pub kind: BackendKind,
+    /// Detected server release.
     pub version: ServerVersion,
+    /// Capabilities validated for this connection.
     pub capabilities: Capabilities,
+    /// Active transaction isolation level.
     pub transaction_isolation: String,
 }
 
@@ -74,6 +89,9 @@ struct ServerProbe {
 ///
 /// Dovecote uses UTC civil timestamps and repeatable-read InnoDB snapshots;
 /// accepting a non-UTC session would silently reinterpret every instant.
+/// Detection is capability-based and may accept newer releases that meet the
+/// adapter's minimum requirements. The support matrix advertises only the
+/// exact releases covered by conformance evidence.
 pub async fn detect(pool: &MySqlPool) -> Result<BackendInfo, SchemaError> {
     let mut connection = pool
         .acquire()

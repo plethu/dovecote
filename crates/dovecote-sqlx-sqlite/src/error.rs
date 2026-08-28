@@ -26,28 +26,53 @@ pub(crate) fn is_busy(source: &sqlx::Error) -> bool {
         .is_some_and(|code| code == 5 || code == 6 || code & 0xff == 5 || code & 0xff == 6)
 }
 
+/// Errors returned while enqueueing an event.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum EnqueueError {
+    /// The transaction was not opened with SQLite's writer lock.
     #[error("enqueue requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
+    /// The adapter's bounded busy policy is not representable by SQLite.
     #[error("invalid SQLite busy configuration: {detail}")]
-    Configuration { detail: String },
+    Configuration {
+        /// Diagnostic describing the invalid configuration.
+        detail: String,
+    },
+    /// Existing identity has different immutable event content.
     #[error("idempotency conflict for existing row {existing_row_id:?}")]
-    IdempotencyConflict { existing_row_id: RowId },
+    IdempotencyConflict {
+        /// Existing Dovecote row that conflicted with the event.
+        existing_row_id: RowId,
+    },
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// A caller transaction remained blocked after the configured busy wait.
     #[error("{operation}: busy lock exhausted by the caller transaction: {source}")]
     BusyExhausted {
+        /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
@@ -70,66 +95,119 @@ impl EnqueueError {
 
 /// Errors returned by the migration-only importer.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ImportError {
+    /// The transaction was not opened with SQLite's writer lock.
     #[error("import requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
+    /// Existing identity has different immutable event content.
     #[error("immutable event identity conflict for existing row {existing_row_id:?}")]
-    IdentityConflict { existing_row_id: RowId },
+    IdentityConflict {
+        /// Existing Dovecote row that conflicted with the imported event.
+        existing_row_id: RowId,
+    },
+    /// Existing delivery state differs from the requested imported state.
     #[error("imported delivery state conflict for existing row {existing_row_id:?}")]
-    ImportConflict { existing_row_id: RowId },
+    ImportConflict {
+        /// Existing Dovecote row whose delivery state conflicted.
+        existing_row_id: RowId,
+    },
+    /// The adapter configuration is not valid for SQLite.
     #[error("invalid SQLite configuration: {detail}")]
-    Configuration { detail: String },
+    Configuration {
+        /// Diagnostic describing the invalid configuration.
+        detail: String,
+    },
+    /// Imported state failed Dovecote validation.
     #[error("invalid imported delivery state: {source}")]
     InvalidState {
         #[source]
+        /// Original validation error.
         source: dovecote::ValidationError,
     },
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// A caller transaction remained blocked after the configured busy wait.
     #[error("{operation}: busy lock exhausted by the caller transaction: {source}")]
     BusyExhausted {
+        /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
 
 /// Errors returned by the migration-only delivery finalizer.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum FinalizeError {
+    /// The transaction was not opened with SQLite's writer lock.
     #[error("finalization requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
+    /// No event row exists for the requested delivery.
     #[error("event row not found")]
     NotFound,
+    /// The row is not a canonical imported pending delivery.
     #[error("delivery row {row_id:?} is not a canonical imported pending delivery")]
-    StateConflict { row_id: RowId },
+    StateConflict {
+        /// Dovecote row that was not in the expected state.
+        row_id: RowId,
+    },
+    /// Authoritative delivery time failed Dovecote validation.
     #[error("invalid authoritative delivery timestamp: {source}")]
     InvalidTimestamp {
         #[source]
+        /// Original validation error.
         source: dovecote::ValidationError,
     },
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// A caller transaction remained blocked after the configured busy wait.
     #[error("{operation}: busy lock exhausted by the caller transaction: {source}")]
     BusyExhausted {
+        /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
@@ -160,34 +238,61 @@ impl ImportError {
     }
 }
 
+/// Errors returned while selecting and claiming a batch of events.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum ClaimError {
     #[cfg(test)]
+    /// Test-only failpoint used to verify claim rollback.
     #[error("test claim failpoint triggered after delivery updates")]
     InjectedFailure,
+    /// The delivery attempt counter cannot be incremented.
     #[error("attempt counter overflow for row {row_id:?}")]
-    CounterOverflow { row_id: RowId },
+    CounterOverflow {
+        /// Dovecote row whose attempt counter overflowed.
+        row_id: RowId,
+    },
+    /// The operating system could not provide a fresh claim token.
     #[error("operating-system entropy unavailable: {source}")]
     EntropyUnavailable {
         #[source]
+        /// Original entropy error.
         source: getrandom::Error,
     },
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// The adapter's bounded busy policy is not representable by SQLite.
     #[error("invalid SQLite busy configuration: {detail}")]
-    Configuration { detail: String },
+    Configuration {
+        /// Diagnostic describing the invalid configuration.
+        detail: String,
+    },
+    /// A claim could not finish after the configured busy retries.
     #[error("{operation}: busy lock exhausted after bounded retries: {source}")]
     BusyExhausted {
+        /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
@@ -220,30 +325,56 @@ impl ClaimError {
     }
 }
 
+/// Errors returned by claim-token-fenced delivery mutations.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum MutationError {
+    /// No event row exists for the requested delivery.
     #[error("event row not found")]
     NotFound,
+    /// The requested mutation is invalid for the current delivery state.
     #[error("illegal delivery transition from {state:?}")]
-    IllegalTransition { state: DeliveryState },
+    IllegalTransition {
+        /// Current durable delivery state.
+        state: DeliveryState,
+    },
+    /// The supplied claim token no longer owns the delivery.
     #[error("claim was lost")]
     LostClaim,
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// The adapter's bounded busy policy is not representable by SQLite.
     #[error("invalid SQLite busy configuration: {detail}")]
-    Configuration { detail: String },
+    Configuration {
+        /// Diagnostic describing the invalid configuration.
+        detail: String,
+    },
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// A mutation could not finish after the configured busy retries.
     #[error("{operation}: busy lock exhausted after bounded retries: {source}")]
     BusyExhausted {
+        /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
@@ -269,22 +400,35 @@ impl MutationError {
     }
 }
 
+/// Errors returned by live and snapshot paging.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum PageError {
+    /// The snapshot pager has already been finished or rolled back.
     #[error("snapshot pager is closed")]
     Closed,
+    /// Stored or returned data could not be represented safely.
     #[error("serialization: {detail}")]
-    Serialization { detail: String },
+    Serialization {
+        /// Diagnostic describing the invalid stored data.
+        detail: String,
+    },
+    /// A page operation could not finish after the configured busy retries.
     #[error("{operation}: busy lock exhausted after bounded retries: {source}")]
     BusyExhausted {
+        /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
@@ -305,20 +449,32 @@ impl PageError {
     }
 }
 
+/// Errors returned while checking the installed schema.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum SchemaError {
+    /// Installed durable schema is incompatible with this adapter.
     #[error("migration mismatch: {detail}")]
-    MigrationMismatch { detail: String },
+    MigrationMismatch {
+        /// Diagnostic describing the incompatible schema.
+        detail: String,
+    },
+    /// A schema query could not finish after the configured busy wait.
     #[error("{operation}: busy lock exhausted after bounded retries: {source}")]
     BusyExhausted {
+        /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
+    /// A non-busy SQLx operation failed.
     #[error("{operation}: {source}")]
     Sql {
+        /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
+        /// Original underlying SQLite error.
         source: sqlx::Error,
     },
 }
