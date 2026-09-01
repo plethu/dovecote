@@ -69,6 +69,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "borrow-or-share"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -289,14 +295,14 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dovecote"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
+ "fluent-uri",
  "mime",
  "serde_json",
  "thiserror",
  "time",
- "url",
 ]
 
 [[package]]
@@ -318,7 +324,7 @@ dependencies = [
 
 [[package]]
 name = "dovecote-sqlx-mysql"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom",
@@ -329,7 +335,7 @@ dependencies = [
 
 [[package]]
 name = "dovecote-sqlx-postgres"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom",
@@ -340,7 +346,7 @@ dependencies = [
 
 [[package]]
 name = "dovecote-sqlx-sqlite"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom",
@@ -391,6 +397,17 @@ name = "find-msvc-tools"
 version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d45db016d36b838f563236e9193d0ee6ce38f3f68b6c94e914b4929c96bbb890"
+
+[[package]]
+name = "fluent-uri"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc74ac4d8359ae70623506d512209619e5cf8f347124910440dbc221714b328e"
+dependencies = [
+ "borrow-or-share",
+ "ref-cast",
+ "serde",
+]
 
 [[package]]
 name = "flume"
@@ -938,6 +955,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "ref-cast"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7e440fb4e4b4147295338efb76001ab9e4efc0e5839df2c47fc5ac2381d365c3"
+dependencies = [
+ "ref-cast-impl",
+]
+
+[[package]]
+name = "ref-cast-impl"
+version = "1.0.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "92ecd8964f8453721699a1ed72037b0db49ce2f5a5138486ee89bed6f67cdf3a"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.3",
 ]
 
 [[package]]

@@ -17,7 +17,7 @@ Your application runs the worker, chooses the transport, and applies
 migrations. Dovecote promises neither FIFO nor exactly-once delivery.
 
 > [!WARNING]
-> Dovecote is pre-release (`0.2.0`). Expect the Rust API, durable schema, and
+> Dovecote is pre-release (`0.2.x`). Expect the Rust API, durable schema, and
 > migration tooling to change before v1. Backend support is version-specific;
 > see the [support matrix](docs/support-matrix.md). Existing Keepsake
 > deployments on MariaDB use the documented [maintenance-window migration

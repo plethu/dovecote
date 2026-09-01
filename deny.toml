@@ -27,6 +27,7 @@ allow = [
   "ISC",
   "LGPL-2.1-or-later",
   "MIT",
+  "MIT-0",
   "Unicode-3.0",
   "Unlicense",
   "Zlib",

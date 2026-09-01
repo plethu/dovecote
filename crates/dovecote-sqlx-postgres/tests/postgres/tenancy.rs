@@ -1,7 +1,7 @@
 use dovecote::{MAX_TENANT_ID_BYTES, TenantId};
 use dovecote_sqlx_postgres::{
-    MIGRATIONS, PostgresDovecote, RLS_PROFILE_SQL, V1_TENANT_ACTIVATE_SQL, V1_TENANT_PREPARE_SQL,
-    bind_tenant,
+    LEGACY_MIGRATION, MIGRATIONS, PostgresDovecote, RLS_PROFILE_SQL, V1_TENANT_ACTIVATE_V2_SQL,
+    V1_TENANT_PREPARE_SQL, bind_tenant,
 };
 use sqlx::{
     postgres::{PgConnectOptions, PgPoolOptions},
@@ -16,12 +16,90 @@ use std::{
 #[test]
 fn tenant_migration_path_requires_explicit_backfill() {
     assert!(V1_TENANT_PREPARE_SQL.contains("ADD COLUMN tenant_id VARCHAR(255)"));
-    assert!(V1_TENANT_ACTIVATE_SQL.contains("tenant_id IS NULL"));
-    assert!(V1_TENANT_ACTIVATE_SQL.contains("Dovecote tenant backfill is incomplete"));
-    assert!(V1_TENANT_ACTIVATE_SQL.starts_with("--"));
-    assert!(V1_TENANT_ACTIVATE_SQL.contains("BEGIN;"));
-    assert!(V1_TENANT_ACTIVATE_SQL.contains("COMMIT;"));
-    assert!(!V1_TENANT_ACTIVATE_SQL.contains("COALESCE(tenant_id"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.contains("tenant_id IS NULL"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.contains("Dovecote tenant backfill is incomplete"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.starts_with("--"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.contains("BEGIN;"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.contains("COMMIT;"));
+    assert!(!V1_TENANT_ACTIVATE_V2_SQL.contains("COALESCE(tenant_id"));
+    assert!(V1_TENANT_ACTIVATE_V2_SQL.contains("dovecote_deliveries_event_row_id_fkey"));
+}
+
+#[tokio::test]
+async fn corrected_postgres_v1_activation_reaches_the_exact_v2_schema() -> Result<(), Box<dyn Error>>
+{
+    let Some(url) = std::env::var_os("DOVECOTE_POSTGRES_URL") else {
+        if super::support::required() {
+            return Err(
+                "DOVECOTE_POSTGRES_URL is required by CI/release PostgreSQL conformance".into(),
+            );
+        }
+        eprintln!("skipping PostgreSQL tenant-activation test: DOVECOTE_POSTGRES_URL is unset");
+        return Ok(());
+    };
+
+    let url = url.to_str().ok_or("PostgreSQL URL is not UTF-8")?;
+    let admin = PgPoolOptions::new().max_connections(2).connect(url).await?;
+    let schema = super::support::isolated_schema_name("dovecote_v1_upgrade");
+    query(sqlx::AssertSqlSafe(format!("CREATE SCHEMA \"{schema}\"")))
+        .execute(&admin)
+        .await?;
+
+    let result = async {
+        let options = PgConnectOptions::from_str(url)?.options([
+            ("search_path", format!("\"{schema}\"")),
+            ("application_name", format!("dovecote-v1-upgrade-{schema}")),
+        ]);
+        let pool = PgPoolOptions::new()
+            .max_connections(2)
+            .connect_with(options)
+            .await?;
+        raw_sql(LEGACY_MIGRATION.sql()).execute(&pool).await?;
+        raw_sql(
+            "INSERT INTO dovecote_events
+                (stream, specversion, event_id, source, event_type, extensions)
+             VALUES ('audit', '1.0', 'legacy-event', 'https://example.test',
+                     'com.example.legacy', '{}');
+             INSERT INTO dovecote_deliveries (event_row_id, state)
+             SELECT row_id, 'pending' FROM dovecote_events;",
+        )
+        .execute(&pool)
+        .await?;
+        raw_sql(V1_TENANT_PREPARE_SQL).execute(&pool).await?;
+        raw_sql(
+            "UPDATE dovecote_events SET tenant_id = 'tenant-a';
+             UPDATE dovecote_deliveries SET tenant_id = 'tenant-a';",
+        )
+        .execute(&pool)
+        .await?;
+        raw_sql(V1_TENANT_ACTIVATE_V2_SQL).execute(&pool).await?;
+        dovecote_sqlx_postgres::check_schema(&pool).await?;
+
+        let foreign_keys: Vec<String> = query_scalar(
+            "SELECT conname
+             FROM pg_constraint
+             WHERE conrelid = 'dovecote_deliveries'::regclass AND contype = 'f'
+             ORDER BY conname",
+        )
+        .fetch_all(&pool)
+        .await?;
+        assert_eq!(foreign_keys, ["dovecote_deliveries_event_fk"]);
+        let retained_rows: i64 = query_scalar("SELECT count(*) FROM dovecote_events")
+            .fetch_one(&pool)
+            .await?;
+        assert_eq!(retained_rows, 1);
+        pool.close().await;
+        Ok::<(), Box<dyn Error>>(())
+    }
+    .await;
+
+    query(sqlx::AssertSqlSafe(format!(
+        "DROP SCHEMA \"{schema}\" CASCADE"
+    )))
+    .execute(&admin)
+    .await?;
+    admin.close().await;
+    result
 }
 
 #[test]

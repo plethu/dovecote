@@ -65,7 +65,9 @@ the [support matrix](support-matrix.md).
 The PostgreSQL v2 baseline is for clean tenant-aware installations. A v1
 deployment must run `V1_TENANT_PREPARE_SQL`, assign every event and delivery a
 validated tenant in an operator-owned backfill, verify that each pair agrees,
-then run `V1_TENANT_ACTIVATE_SQL`. Activation fails while any tenant is null;
+then run the backend activation artifact. PostgreSQL deployments on Dovecote
+0.2.1 or later must use `V1_TENANT_ACTIVATE_V2_SQL`; the immutable 0.2.0
+`V1_TENANT_ACTIVATE_SQL` cannot complete. Activation fails while any tenant is null;
 no default or guessed tenant is used. The v1 migration bytes remain available
 as `LEGACY_MIGRATION` and are not rewritten.
 

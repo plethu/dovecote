@@ -121,6 +121,11 @@ fn malformed_uri_references_are_rejected() {
 }
 
 #[test]
+fn tenant_ids_reject_whitespace_only_values() {
+    assert!(crate::TenantId::new("   ").is_err());
+}
+
+#[test]
 fn trace_context_uses_strict_w3c_grammar() {
     assert!(
         validate_traceparent("00-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA-0123456789abcdef-01").is_err()
@@ -133,9 +138,29 @@ fn trace_context_uses_strict_w3c_grammar() {
     assert!(validate_tracestate("1vendor=value").is_err());
     assert!(validate_tracestate("_vendor=value").is_err());
     assert!(validate_tracestate("-vendor=value").is_err());
-    assert!(validate_tracestate("vendor=").is_ok());
+    assert!(validate_tracestate("vendor=").is_err());
+    assert!(validate_tracestate("vendor=value ").is_ok());
     assert!(validate_tracestate("").is_ok());
     assert!(validate_tracestate(" , \t").is_ok());
+    assert!(validate_tracestate(&",".repeat(32)).is_err());
+
+    let current = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ca902b7-01";
+    assert!(validate_traceparent(current).is_ok());
+    assert!(validate_traceparent(&format!("{current}-future")).is_err());
+    assert!(
+        validate_traceparent("00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ca902b7-03").is_err()
+    );
+    assert!(
+        validate_traceparent("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ca902b7-ff").is_ok()
+    );
+    assert!(
+        validate_traceparent("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ca902b7-ff-future")
+            .is_ok()
+    );
+    assert!(
+        validate_traceparent("01-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ca902b7-fffuture")
+            .is_err()
+    );
 }
 
 #[test]

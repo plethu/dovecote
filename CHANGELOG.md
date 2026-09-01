@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.2.1] - 2026-09-01
+
+### Fixed
+
+- Added a corrected, newly named PostgreSQL v1-to-v2 activation artifact while
+  preserving the published 0.2.0 artifact byte-for-byte. The corrected route
+  removes the version-1 delivery foreign key and updates the schema marker
+  before validating its version-2 constraint.
+- Tightened W3C trace-context validation: keyed `tracestate` values must be
+  non-empty and end in a non-blank character, current-version flags reject
+  reserved bits, and future `traceparent` versions accept additive fields.
+- Corrected the acceptance specification's current durable schema version.
+- Replaced the handwritten RFC 3986 URI-reference parser with `fluent-uri`
+  0.4.1 and aligned tenant validation with Keepsake and Gatekeep by rejecting
+  whitespace-only identities.
+
 ## [0.2.0] - 2026-08-28
 
 ### Core

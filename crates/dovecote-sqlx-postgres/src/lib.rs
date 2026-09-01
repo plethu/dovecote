@@ -26,9 +26,11 @@ pub use error::{
     ClaimError, EnqueueError, FinalizeError, ImportError, MutationError, PageError, SchemaError,
     TransientKind,
 };
+#[allow(deprecated)]
 pub use migration::{
     CrateVersion, LEGACY_MIGRATION, MIGRATIONS, Migration, MigrationCompatibility,
-    MigrationCompatibilityError, SCHEMA_VERSION, V1_TENANT_ACTIVATE_SQL, V1_TENANT_PREPARE_SQL,
+    MigrationCompatibilityError, SCHEMA_VERSION, V1_TENANT_ACTIVATE_SQL, V1_TENANT_ACTIVATE_V2_SQL,
+    V1_TENANT_PREPARE_SQL,
 };
 pub use page::SnapshotPager;
 pub use rls::{RLS_PROFILE_SQL, bind_tenant};

@@ -4,8 +4,8 @@ use crate::{
     bounds::{
         MAX_TRACESTATE_BYTES, MAX_TRACESTATE_KEY_BYTES, MAX_TRACESTATE_MEMBERS,
         MAX_TRACESTATE_SYSTEM_ID_BYTES, MAX_TRACESTATE_TENANT_ID_BYTES, MAX_TRACESTATE_VALUE_BYTES,
-        TRACEPARENT_FIELDS, TRACEPARENT_FLAGS_CHARS, TRACEPARENT_PARENT_ID_CHARS,
-        TRACEPARENT_TRACE_ID_CHARS, TRACEPARENT_VERSION_CHARS,
+        TRACEPARENT_FLAGS_CHARS, TRACEPARENT_PARENT_ID_CHARS, TRACEPARENT_TRACE_ID_CHARS,
+        TRACEPARENT_VERSION_CHARS,
     },
     error::{ValidationError, ValidationKind},
 };
@@ -43,90 +43,48 @@ pub(crate) fn validate_uri_reference(
     allow_empty: bool,
 ) -> Result<(), ValidationError> {
     validate_string(field, value, maximum_bytes, allow_empty)?;
-    if !value.is_ascii() {
-        return Err(ValidationError::new(field, ValidationKind::Syntax));
-    }
-
-    if value
-        .as_bytes()
-        .windows(1)
-        .enumerate()
-        .any(|(index, byte)| {
-            byte[0] == b'%'
-                && (index + 2 >= value.len()
-                    || !value.as_bytes()[index + 1].is_ascii_hexdigit()
-                    || !value.as_bytes()[index + 2].is_ascii_hexdigit())
-        })
-    {
-        return Err(ValidationError::new(field, ValidationKind::Syntax));
-    }
-
-    if value.starts_with("//") {
-        url::Url::parse(&format!("https:{value}"))
-            .map_err(|_| ValidationError::new(field, ValidationKind::Syntax))?;
-        return Ok(());
-    }
-
-    if let Some(colon) = value.find(':') {
-        let first_delimiter = value.find(['/', '?', '#']).unwrap_or(value.len());
-        if colon < first_delimiter {
-            let scheme = &value[..colon];
-            if scheme.is_empty()
-                || !scheme.as_bytes()[0].is_ascii_alphabetic()
-                || !scheme
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || b"+-.".contains(&byte))
-            {
-                return Err(ValidationError::new(field, ValidationKind::Syntax));
-            }
-            url::Url::parse(value)
-                .map_err(|_| ValidationError::new(field, ValidationKind::Syntax))?;
-            return Ok(());
-        }
-    }
-
-    let bytes = value.as_bytes();
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' => {
-                if index + 2 >= bytes.len()
-                    || !bytes[index + 1].is_ascii_hexdigit()
-                    || !bytes[index + 2].is_ascii_hexdigit()
-                {
-                    return Err(ValidationError::new(field, ValidationKind::Syntax));
-                }
-                index += 3;
-            }
-            byte if byte.is_ascii_alphanumeric() || b"-._~:/?#@!$&'()*+,;=".contains(&byte) => {
-                index += 1;
-            }
-            _ if bytes[index].is_ascii() => {
-                return Err(ValidationError::new(field, ValidationKind::Syntax));
-            }
-            _ => return Err(ValidationError::new(field, ValidationKind::Syntax)),
-        }
-    }
-
-    Ok(())
+    fluent_uri::UriRef::parse(value)
+        .map(|_| ())
+        .map_err(|_| ValidationError::new(field, ValidationKind::Syntax))
 }
 
 pub(crate) fn validate_traceparent(value: &str) -> Result<(), ValidationError> {
-    let parts: Vec<_> = value.split('-').collect();
-    if parts.len() != TRACEPARENT_FIELDS
-        || parts[0].len() != TRACEPARENT_VERSION_CHARS
-        || parts[1].len() != TRACEPARENT_TRACE_ID_CHARS
-        || parts[2].len() != TRACEPARENT_PARENT_ID_CHARS
-        || parts[3].len() != TRACEPARENT_FLAGS_CHARS
-        || parts.iter().any(|part| {
-            !part
-                .bytes()
-                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-        })
-        || parts[0].eq_ignore_ascii_case("ff")
-        || parts[1].chars().all(|character| character == '0')
-        || parts[2].chars().all(|character| character == '0')
-    {
+    const VERSION_END: usize = TRACEPARENT_VERSION_CHARS;
+    const TRACE_ID_START: usize = VERSION_END + 1;
+    const TRACE_ID_END: usize = TRACE_ID_START + TRACEPARENT_TRACE_ID_CHARS;
+    const PARENT_ID_START: usize = TRACE_ID_END + 1;
+    const PARENT_ID_END: usize = PARENT_ID_START + TRACEPARENT_PARENT_ID_CHARS;
+    const FLAGS_START: usize = PARENT_ID_END + 1;
+    const CURRENT_LENGTH: usize = FLAGS_START + TRACEPARENT_FLAGS_CHARS;
+
+    let bytes = value.as_bytes();
+    let valid_lower_hex = |part: &[u8]| {
+        part.iter()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    };
+    let invalid = bytes.len() < CURRENT_LENGTH
+        || bytes.get(VERSION_END) != Some(&b'-')
+        || bytes.get(TRACE_ID_END) != Some(&b'-')
+        || bytes.get(PARENT_ID_END) != Some(&b'-')
+        || !valid_lower_hex(&bytes[..VERSION_END])
+        || !valid_lower_hex(&bytes[TRACE_ID_START..TRACE_ID_END])
+        || !valid_lower_hex(&bytes[PARENT_ID_START..PARENT_ID_END])
+        || !valid_lower_hex(&bytes[FLAGS_START..CURRENT_LENGTH])
+        || &bytes[..VERSION_END] == b"ff"
+        || bytes[TRACE_ID_START..TRACE_ID_END]
+            .iter()
+            .all(|byte| *byte == b'0')
+        || bytes[PARENT_ID_START..PARENT_ID_END]
+            .iter()
+            .all(|byte| *byte == b'0')
+        || if &bytes[..VERSION_END] == b"00" {
+            bytes.len() != CURRENT_LENGTH
+                || !matches!(&bytes[FLAGS_START..CURRENT_LENGTH], b"00" | b"01")
+        } else {
+            bytes.len() > CURRENT_LENGTH && bytes.get(CURRENT_LENGTH) != Some(&b'-')
+        };
+
+    if invalid {
         return Err(ValidationError::new(
             "traceparent",
             ValidationKind::TraceContext,
@@ -145,14 +103,20 @@ pub(crate) fn validate_tracestate(value: &str) -> Result<(), ValidationError> {
     }
 
     let mut keys = std::collections::BTreeSet::new();
-    let mut members = 0;
-    for raw_member in value.split(',') {
+    let raw_members = value.split(',').collect::<Vec<_>>();
+    if raw_members.len() > MAX_TRACESTATE_MEMBERS {
+        return Err(ValidationError::new(
+            "tracestate",
+            ValidationKind::TraceContext,
+        ));
+    }
+
+    for raw_member in raw_members {
         let member = raw_member.trim_matches([' ', '\t']);
         if member.is_empty() {
             continue;
         }
 
-        members += 1;
         let Some((key, member_value)) = member.split_once('=') else {
             return Err(ValidationError::new(
                 "tracestate",
@@ -160,9 +124,9 @@ pub(crate) fn validate_tracestate(value: &str) -> Result<(), ValidationError> {
             ));
         };
 
-        if members > MAX_TRACESTATE_MEMBERS
-            || key.is_empty()
+        if key.is_empty()
             || key.len() > MAX_TRACESTATE_KEY_BYTES
+            || member_value.is_empty()
             || member_value.len() > MAX_TRACESTATE_VALUE_BYTES
             || !valid_tracestate_key(key)
             || !member_value

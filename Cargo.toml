@@ -10,7 +10,7 @@ resolver = "3"
 [workspace.package]
 edition = "2024"
 rust-version = "1.94"
-version = "0.2.0"
+version = "0.2.1"
 license = "MIT OR Apache-2.0"
 readme = "README.md"
 repository = "https://github.com/plethu/dovecote"
@@ -21,7 +21,7 @@ categories = ["database", "asynchronous"]
 [workspace.dependencies]
 base64 = "0.22.1"
 cloudevents = { package = "cloudevents-sdk", version = "0.9.0" }
-dovecote = { path = "crates/dovecote", version = "0.2.0" }
+dovecote = { path = "crates/dovecote", version = "0.2.1" }
 getrandom = "0.4.3"
 jsonschema = { version = "0.52.0", default-features = false }
 mime = "0.3.17"
@@ -30,4 +30,4 @@ serde_json = { version = "1.0.140", features = ["preserve_order"] }
 sqlx = { version = "0.9.0", default-features = false }
 thiserror = "2.0.12"
 time = { version = "0.3.41", features = ["formatting", "macros", "parsing"] }
-url = "2.5.4"
+fluent-uri = "0.4.1"

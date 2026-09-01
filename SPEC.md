@@ -2,7 +2,7 @@
 
 - Status: accepted design for initial implementation
 - Specification date: 16 August 2026
-- Durable schema version: 1
+- Durable schema version: 2
 - CloudEvents compatibility target: 1.0
 - Initial MSRV: Rust 1.94
 - Licence: `MIT OR Apache-2.0`
@@ -133,7 +133,7 @@ The exact final Rust field visibility and constructors may use accessors, but
 the model and distinctions above are public contract. In particular, absent
 data, present empty data, JSON data, and opaque binary data are distinct.
 
-Dovecote fixes `specversion` to `1.0` for schema version 1. Callers do not set it.
+Dovecote fixes `specversion` to `1.0` for durable schema versions 1 and 2. Callers do not set it.
 Dovecote validates the CloudEvents 1.0 required attributes at construction:
 
 - `id` is a non-empty CloudEvents String;
@@ -177,7 +177,7 @@ not part of Dovecote's claim ordering. It MUST also appear as the
 Callers MUST NOT separately insert an extension named `partitionkey`.
 
 Neither field implies FIFO. A future FIFO mode would require a separately
-specified sequence and head-of-line claim rule; schema version 1 has neither.
+specified sequence and head-of-line claim rule; durable schema versions 1 and 2 have neither.
 
 ### 4.3 Extension attributes
 
@@ -209,7 +209,7 @@ name. Each member has exactly `type` and `value`; type is one of `boolean`,
 `integer`, `string`, `binary`, `uri`, `uri-reference`, or `timestamp`. Binary is
 padded RFC 4648 base64, timestamps use Dovecote's canonical timestamp form,
 and all other values use their natural JSON or string form. This tagged form is
-part of durable schema version 1 and prevents a URI or binary value from being
+part of durable schema versions 1 and 2 and prevents a URI or binary value from being
 silently recovered as an ordinary string.
 
 Arbitrary HTTP, Kafka, NATS, or vendor headers are not extensions and MUST NOT

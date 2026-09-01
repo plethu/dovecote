@@ -66,7 +66,27 @@ bounded_string!(EventId, "event id", MAX_EVENT_ID_BYTES);
 bounded_string!(EventType, "event type", MAX_EVENT_TYPE_BYTES);
 bounded_string!(EventSubject, "subject", MAX_SUBJECT_BYTES);
 bounded_string!(PartitionKey, "partition key", MAX_PARTITION_KEY_BYTES);
-bounded_string!(TenantId, "tenant id", MAX_TENANT_ID_BYTES);
+
+#[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+/// Validated bounded tenant identity.
+pub struct TenantId(String);
+
+impl TenantId {
+    /// Creates a tenant identity, rejecting empty and whitespace-only values.
+    pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
+        let value = value.into();
+        validate_string("tenant id", &value, Some(MAX_TENANT_ID_BYTES), false)?;
+        if value.trim().is_empty() {
+            return Err(ValidationError::new("tenant id", ValidationKind::Empty));
+        }
+        Ok(Self(value))
+    }
+
+    /// Returns the value as a string slice.
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
 /// Validated CloudEvents source URI-reference.
@@ -95,7 +115,8 @@ impl AbsoluteUri {
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("URI", &value, None, false)?;
-        url::Url::parse(&value).map_err(|_| ValidationError::new("URI", ValidationKind::Syntax))?;
+        fluent_uri::Uri::parse(value.as_str())
+            .map_err(|_| ValidationError::new("URI", ValidationKind::Syntax))?;
         Ok(Self(value))
     }
 

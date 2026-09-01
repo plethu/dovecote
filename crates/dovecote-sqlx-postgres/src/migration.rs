@@ -200,8 +200,21 @@ pub const V1_TENANT_PREPARE_SQL: &str =
     include_str!("../migrations/0002_dovecote_tenant_prepare.sql");
 
 /// SQL that validates an operator-owned backfill and activates version 2.
+#[deprecated(
+    since = "0.2.1",
+    note = "the published 0.2.0 artifact cannot complete; use V1_TENANT_ACTIVATE_V2_SQL"
+)]
 pub const V1_TENANT_ACTIVATE_SQL: &str =
     include_str!("../migrations/0002_dovecote_tenant_activate.sql");
+
+/// Corrected SQL that validates an operator-owned backfill and activates version 2.
+///
+/// This replaces the immutable 0.2.0 activation artifact, which cannot complete.
+/// Applications upgrading a version 1 schema run the unchanged
+/// [`V1_TENANT_PREPARE_SQL`], perform their tenant backfill, and then run this
+/// artifact instead of [`V1_TENANT_ACTIVATE_SQL`].
+pub const V1_TENANT_ACTIVATE_V2_SQL: &str =
+    include_str!("../migrations/0002_dovecote_tenant_activate_v2.sql");
 
 pub(crate) fn current_migration() -> Result<Migration, String> {
     MIGRATIONS

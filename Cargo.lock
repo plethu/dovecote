@@ -404,10 +404,11 @@ checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "dovecote"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "cloudevents-sdk",
+ "fluent-uri",
  "jsonschema",
  "mime",
  "serde",
@@ -415,12 +416,11 @@ dependencies = [
  "sha2 0.10.9",
  "thiserror",
  "time",
- "url",
 ]
 
 [[package]]
 name = "dovecote-sqlx-mysql"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom 0.4.3",
@@ -432,7 +432,7 @@ dependencies = [
 
 [[package]]
 name = "dovecote-sqlx-postgres"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom 0.4.3",
@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "dovecote-sqlx-sqlite"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "dovecote",
  "getrandom 0.4.3",
