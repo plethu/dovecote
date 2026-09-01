@@ -22,7 +22,7 @@ Dovecote values. Tenant IDs are storage metadata, not an implicit CloudEvents
 extension. A tenant-scoped worker receives the tenant from its claimed or paged
 state and must route it according to application policy. If multiple tenants
 share one destination, that policy must partition consumer deduplication by
-tenant as well as `(source, id)`; Dovecote deliberately does not add tenant
+tenant as well as `(source, id)`; Dovecote does not add tenant
 context to the CloudEvents projection.
 
 ## HTTP

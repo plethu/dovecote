@@ -2,7 +2,7 @@
 
 The checked-in [`cdc.json`](../../crates/dovecote/tests/fixtures/cdc.json)
 fixture is a deterministic, runtime-free conformance model for the mapping in
-SPEC section 10.5. It is deliberately not a Kafka Connect or Debezium runner.
+SPEC section 10.5. It does not run Kafka Connect or Debezium.
 
 The model declares the converter shape `dovecote-json-envelope-base64-v1`:
 record headers carry the router's `id` and `type`, the CloudEvents context, and

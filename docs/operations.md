@@ -34,7 +34,7 @@ need that setting merely to use an already-installed Dovecote schema.
 The SQL is available as `migration.sql()` on each public migration artifact.
 For MySQL/MariaDB, execute the complete artifact through the raw/unprepared
 protocol (for SQLx, `sqlx::raw_sql`) so the trigger bodies are sent as one
-multi-statement request. The artifact deliberately contains no client-side
+multi-statement request. The artifact contains no client-side
 `DELIMITER` directives: a MySQL or MariaDB command-line wrapper must supply
 those directives itself, while SQLx callers must not split the bytes on
 semicolons. Splitting would corrupt trigger bodies and semicolons in comments.

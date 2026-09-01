@@ -5,7 +5,7 @@ transport error means. An application-owned worker should claim no more than
 its bounded in-flight capacity, use a lease longer than its transport timeout
 and scheduling margin, and stop claiming before graceful shutdown.
 
-The recovery loop is deliberately explicit:
+The worker loop has seven steps:
 
 1. claim a bounded batch;
 2. send each event through an application-owned transport;

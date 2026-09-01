@@ -10,17 +10,17 @@ application state, then keeps its delivery state for an application-owned
 worker. In schema version 2, durable event identity is scoped to the tenant
 handle as `(tenant_id, source, id)`.
 
-Claims are leased, and delivery mutations require the matching claim token.
-Delivery is at least once. Consumers publishing multiple tenant domains through
-one destination must include their tenant routing domain in deduplication; a
-single tenant can use `(source, id)`. Dovecote does not run workers, choose
-transports, apply migrations, or promise FIFO or exactly-once delivery.
+Claims are leased, and only the matching claim token can change a delivery.
+Delivery is at least once. For one tenant, consumers can deduplicate on
+`(source, id)`; a shared destination must include the tenant routing domain.
+Your application runs the worker, chooses the transport, and applies
+migrations. Dovecote promises neither FIFO nor exactly-once delivery.
 
 > [!WARNING]
-> Dovecote is pre-release (`0.2.0`). Rust APIs, the durable schema, and migration
-> tooling may change before v1. Backend support is version-specific; see the
-> [support matrix](docs/support-matrix.md). Existing Keepsake deployments on
-> MariaDB use the documented [maintenance-window migration
+> Dovecote is pre-release (`0.2.0`). Expect the Rust API, durable schema, and
+> migration tooling to change before v1. Backend support is version-specific;
+> see the [support matrix](docs/support-matrix.md). Existing Keepsake
+> deployments on MariaDB use the documented [maintenance-window migration
 > route](docs/migrations/keepsake-gatekeep.md#mariadb-maintenance-window-route-for-existing-keepsake-deployments).
 
 ## A transaction
@@ -60,24 +60,23 @@ async fn record(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
 The commit makes the application change and event visible together. Publication
 happens later, through a worker owned by the application.
 
-The `dovecote` crate is synchronous, runtime-free, and SQLx-free. Concrete SQLx
-adapters are provided for PostgreSQL, MySQL/MariaDB, and SQLite; each keeps its
-database's transaction, locking, clock, and migration behaviour explicit.
+The core `dovecote` crate is synchronous and has no runtime or SQLx dependency.
+Its SQLx adapters support PostgreSQL, MySQL/MariaDB, and SQLite without hiding
+their different transaction, locking, clock, or migration behaviour.
 
 ## Documentation
 
-- [SPEC.md](SPEC.md) is the accepted contract.
+- [SPEC.md](SPEC.md) defines the contract.
 - [Operations](docs/operations.md), [recovery](docs/recovery.md), and the
-  [support matrix](docs/support-matrix.md) cover deployment and backend evidence.
+  [support matrix](docs/support-matrix.md) cover production use.
 - [Integration mappings](docs/integrations.md) cover HTTP, Kafka, NATS
-  JetStream, Azure Event Grid, and Debezium boundaries.
-- [1.0 readiness](docs/1.0-readiness.md) records the release gates, non-goals,
-  and versioning policy.
-- The [Keepsake and Gatekeep migration
-  runbook](docs/migrations/keepsake-gatekeep.md) covers paused and rolling
-  cutovers, including the MariaDB maintenance-window route.
-- [CONTRIBUTING.md](CONTRIBUTING.md) and [SECURITY.md](SECURITY.md) describe the
-  project and its private reporting route.
+  JetStream, Azure Event Grid, and Debezium.
+- The [migration runbook](docs/migrations/keepsake-gatekeep.md) moves existing
+  [Keepsake](https://github.com/plethu/keepsake) and
+  [Gatekeep](https://github.com/plethu/gatekeep) data into Dovecote.
+- [1.0 readiness](docs/1.0-readiness.md),
+  [contributing](CONTRIBUTING.md), and [security](SECURITY.md) cover the project
+  itself.
 
 ## Development
 

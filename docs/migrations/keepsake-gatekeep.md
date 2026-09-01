@@ -2,11 +2,11 @@
 
 This runbook moves the generic delivery outbox and its SQL audit records to
 Dovecote while leaving each library's domain state and audit meaning in place.
-It consumes Keepsake 1.1 and Gatekeep 1.0 source schemas and is prepared for
-the verified bridge releases Keepsake 1.2.x and Gatekeep 1.1.x. Their
-historical migrations remain byte-for-byte immutable. Each application adds a
-new, forward-only migration and creates the shared Dovecote schema once in its
-own database boundary.
+It consumes [Keepsake](https://github.com/plethu/keepsake) 1.1 and
+[Gatekeep](https://github.com/plethu/gatekeep) 1.0 source schemas and supports
+their verified 1.x bridge releases. Their historical migrations remain
+byte-for-byte immutable. Each application adds a new, forward-only migration
+and creates the shared Dovecote schema once in its own database boundary.
 
 The 1.x bridge releases are temporary dual-persistence and publication bridges:
 they write the legacy record and a pending Dovecote event/delivery in one

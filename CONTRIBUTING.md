@@ -1,6 +1,6 @@
 # Contributing to Dovecote
 
-Dovecote is a pre-1.0 project (`0.1.1`). The accepted contract is
+Dovecote is a pre-1.0 project (`0.2.0`). The accepted contract is
 [SPEC.md](SPEC.md); the public API, SQL schema, migration rules, and release
 evidence are part of the same review surface.
 

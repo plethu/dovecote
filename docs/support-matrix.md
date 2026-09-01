@@ -1,13 +1,11 @@
 # Backend support matrix
 
-Evidence snapshot: 2026-08-28. Canonical release CI run 33216232011 succeeded
-for all named jobs at code revision
-`cc079c73d01eb07602344d7da0dcd2019b01bc7c`, and independent review passed.
-All four Dovecote 0.2.0 crates—the core crate and the PostgreSQL, MySQL/MariaDB,
-and SQLite SQLx adapters—are published and registry-verified. The local 0.2.0
-release-candidate evidence from disposable backend instances remains as
-recorded below. Docs.rs completion and CDC support are not claimed here. This
-is not a claim for a neighbouring database release.
+Evidence snapshot: 2026-08-28. All four Dovecote 0.2.0 crates are published and
+registry-verified. The
+[canonical CI run](https://github.com/plethu/dovecote/actions/runs/33216232011)
+passed every named job at revision
+`cc079c73d01eb07602344d7da0dcd2019b01bc7c`; the table pairs that run with the
+bounded local backend checks used for the release.
 
 All jobs use SQLx 0.9.0 and run the workspace against Rust 1.94.0 (the MSRV)
 and latest stable Rust. The backend job sets only its own `*_REQUIRED=1`
@@ -15,29 +13,28 @@ variable; other live adapter suites receive their `*_OPTIONAL=1` variable and
 skip. This makes a green job attributable to one backend rather than to an
 accidental service or a missing URL.
 
-| Backend | Exact CI target | Required settings recorded by the test contract | Current evidence | Release status |
-| --- | --- | --- | --- | --- |
-| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override; schema v2 tenant predicates and optional RLS profile | Historical 0.1.1 pre-tenant suite passed in CI. Local 0.2.0 RC: 43/43 serialized backend tests passed, including the configured live RLS role-boundary proof, and the complete-history fixture passed against PostgreSQL 17.11. | 0.2.0 advertised; all four Dovecote crates published and registry-verified; canonical CI run 33216232011 at revision `cc079c73d01eb07602344d7da0dcd2019b01bc7c` succeeded for all named jobs, and independent review passed |
-| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | Historical 0.1.1 suite and complete-history fixture passed in CI. Local 0.2.0 RC: 25/25 backend tests and the complete-history fixture passed against MySQL 8.4.11. The dedicated disposable v1-to-v2 activation/preflight/interruption/rerun rehearsal passed 1/1 on MySQL 8.4.11. | 0.2.0 advertised; all four Dovecote crates published and registry-verified; canonical CI run 33216232011 at revision `cc079c73d01eb07602344d7da0dcd2019b01bc7c` succeeded for all named jobs, and independent review passed |
-| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series | Historical 0.1.1 suite and complete-history fixture passed separately from MySQL 8.4 in CI. Local 0.2.0 RC: 24/24 backend tests and the complete-history fixture passed against MySQL 26.7.0. | 0.2.0 advertised; all four Dovecote crates published and registry-verified; canonical CI run 33216232011 at revision `cc079c73d01eb07602344d7da0dcd2019b01bc7c` succeeded for all named jobs, and independent review passed |
-| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | Historical 0.1.1 suite and pinned 10.3.17-to-11.8.6 maintenance-window fixture passed in CI. Local 0.2.0 RC: 25/25 backend tests passed, with five repeated competing-import race runs, and the complete-history maintenance path passed from MariaDB 10.3.17 to 11.8.6. The dedicated disposable v1-to-v2 activation/preflight/interruption/rerun rehearsal passed 1/1 on MariaDB 11.8.6. | 0.2.0 advertised; all four Dovecote crates published and registry-verified; canonical CI run 33216232011 at revision `cc079c73d01eb07602344d7da0dcd2019b01bc7c` succeeded for all named jobs, and independent review passed. Existing Keepsake deployments use the maintenance-window route below. |
-| SQLite | SQLx linked runtime `3.46.0` | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots | Historical 0.1.1 linked-runtime suite and migration smoke test passed on stable and MSRV. Local 0.2.0 RC current adapter suites and the complete-history fixture passed. | 0.2.0 advertised; all four Dovecote crates published and registry-verified; canonical CI run 33216232011 at revision `cc079c73d01eb07602344d7da0dcd2019b01bc7c` succeeded for all named jobs, and independent review passed |
+| Backend | Exact CI target | Required settings recorded by the test contract | Current evidence |
+| --- | --- | --- | --- |
+| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override; schema v2 tenant predicates and optional RLS profile | The 0.2.0 release checks passed 43/43 serialized backend tests, including the configured live RLS role-boundary proof, plus the complete-history fixture. |
+| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | The 0.2.0 release checks passed 25/25 backend tests and the complete-history fixture. A disposable v1-to-v2 activation, preflight, interruption, and rerun rehearsal also passed. |
+| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series | The 0.2.0 release checks passed 24/24 backend tests and the complete-history fixture. |
+| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | The 0.2.0 release checks passed 25/25 backend tests, five repeated competing-import races, and the complete-history maintenance path from MariaDB 10.3.17 to 11.8.6. A disposable v1-to-v2 activation, preflight, interruption, and rerun rehearsal also passed. Existing Keepsake deployments use the maintenance-window route below. |
+| SQLite | SQLx linked runtime `3.46.0` | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots | The 0.2.0 release checks and complete-history fixture passed on the linked runtime. |
 
 ## Local opt-in high-cardinality evidence
 
-The ignored `DOVECOTE_HIGH_CARDINALITY=1` fixture passed locally on this
-release candidate: PostgreSQL 17.11 completed 1/1 in 3.10 seconds, and SQLite
+The ignored `DOVECOTE_HIGH_CARDINALITY=1` fixture passed locally before the
+release: PostgreSQL 17.11 completed 1/1 in 3.10 seconds, and SQLite
 linked runtime 3.46.0 completed 1/1 in 1.14 seconds. Each run populated 10,000
 tenants with one shared CloudEvents `(source, event_id)` identity per tenant,
 then added 64 events for one hot tenant: 10,064 event rows and 10,064 delivery
 rows. These are bounded, disposable local opt-in results, not CI evidence, a
 hardware-independent latency SLO, or a general throughput claim.
 
-The local 0.2.0 complete-history matrix covers SQLite, PostgreSQL 17.11,
+The 0.2.0 complete-history matrix covers SQLite, PostgreSQL 17.11,
 MySQL 8.4.11, MySQL Innovation 26.7.0, and the MariaDB 10.3.17 to 11.8.6
-maintenance-window route. These are reproducible local release-candidate
-results only; they do not change the release status above or establish a
-deployment claim before the CI, package, and final review gates pass.
+maintenance-window route. These are reproducible release checks, not
+machine-independent performance evidence or a deployment SLO.
 
 The three adapters also expose the migration-only
 `import_for_migration` and `finalize_pending_delivery_for_migration`
@@ -69,8 +66,8 @@ does not imply the privilege to create roles or prove RLS boundaries.
 
 ## MariaDB migration evidence
 
-The MariaDB migration fixture is deliberately different from the ordinary
-MySQL-family schema fixture. It creates the historical Keepsake and Gatekeep
+The MariaDB migration fixture differs from the ordinary MySQL-family schema
+fixture. It creates the historical Keepsake and Gatekeep
 tables on pinned MariaDB 10.3.17 from the hash-checked published migration
 artifacts, cleanly stops that server, starts MariaDB 11.8.6 on the same data
 volume, runs `mariadb-upgrade`, and invokes the public Dovecote importer against
