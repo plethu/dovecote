@@ -1,9 +1,10 @@
 //! Synchronous, runtime-free values for Dovecote's transactional-outbox contract.
 //!
-//! This crate deliberately does not know about SQLx, an async runtime, a
+//! This crate deliberately does not know about `SQLx`, an async runtime, a
 //! database clock, or a transport. The adapter crates own those effects and
 //! use these validated values at their boundaries.
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 
 mod bounds;
 mod error;
@@ -42,5 +43,5 @@ pub use value::{
     PartitionKey, SchemaUri, StreamName, TenantId, UriReference,
 };
 
-/// The CloudEvents version persisted in the durable row and emitted projections.
+/// The `CloudEvents` version persisted in the durable row and emitted projections.
 pub const SPEC_VERSION: &str = "1.0";

@@ -1,4 +1,4 @@
-//! PostgreSQL live and finite snapshot paging.
+//! `PostgreSQL` live and finite snapshot paging.
 //!
 //! Live pages are independent reads: they are ordered by the immutable event
 //! row ID, but callers must reconcile later if concurrent commits can invert
@@ -104,7 +104,7 @@ pub(crate) async fn begin_snapshot_for_scope(
     })
 }
 
-/// A bounded, finite read over one PostgreSQL repeatable-read snapshot.
+/// A bounded, finite read over one `PostgreSQL` repeatable-read snapshot.
 ///
 /// The pager owns the connection-bound transaction.  It does not accept an
 /// arbitrary executor and never releases the transaction between pages.  A
@@ -134,16 +134,19 @@ pub struct SnapshotPager {
 
 impl SnapshotPager {
     /// Returns the last row ID returned by a non-empty page.
+    #[must_use]
     pub const fn cursor(&self) -> Option<RowId> {
         self.cursor
     }
 
     /// Returns the maximum row ID visible to this pager's finite export.
+    #[must_use]
     pub const fn upper_bound(&self) -> Option<RowId> {
         self.upper_bound
     }
 
     /// Returns whether the pager has returned its final page.
+    #[must_use]
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted
     }
@@ -154,6 +157,10 @@ impl SnapshotPager {
     /// cursor.  Once exhausted, subsequent calls return an empty page without
     /// issuing SQL; call [`finish`](Self::finish) or
     /// [`rollback`](Self::rollback) to release the transaction explicitly.
+    ///
+    /// # Errors
+    /// Returns an error if a stored event or delivery cannot be validated or the
+    /// database read fails. Roll back or drop the pager after a failed read.
     pub async fn next_page(&mut self, limit: Limit) -> Result<Vec<PagedEvent>, PageError> {
         if self.exhausted {
             return Ok(Vec::new());
@@ -183,6 +190,10 @@ impl SnapshotPager {
     }
 
     /// Commits the read-only transaction and releases its pooled connection.
+    ///
+    /// # Errors
+    /// Returns a database error if committing the read transaction fails. A lost
+    /// commit response does not establish whether the server committed.
     pub async fn finish(self) -> Result<(), PageError> {
         self.transaction
             .commit()
@@ -191,6 +202,9 @@ impl SnapshotPager {
     }
 
     /// Rolls back the read-only transaction and releases its pooled connection.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn rollback(self) -> Result<(), PageError> {
         self.transaction
             .rollback()
@@ -199,6 +213,9 @@ impl SnapshotPager {
     }
 
     /// Closes the pager by rolling back its read-only transaction.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn close(self) -> Result<(), PageError> {
         self.rollback().await
     }
@@ -242,7 +259,7 @@ async fn query_page_on_connection(
 // Keep this SQL in one visible shape for both live and snapshot reads.  The
 // snapshot variant adds an upper bound while retaining the same strict cursor
 // and ordering semantics.
-const PAGE_SQL: &str = r#"
+const PAGE_SQL: &str = r"
     SELECT e.row_id,
            e.tenant_id,
            e.stream,
@@ -276,9 +293,9 @@ const PAGE_SQL: &str = r#"
     WHERE ($1::varchar IS NULL OR e.tenant_id = $1) AND e.row_id > $2
     ORDER BY e.row_id ASC
     LIMIT $3
-"#;
+";
 
-const SNAPSHOT_PAGE_SQL: &str = r#"
+const SNAPSHOT_PAGE_SQL: &str = r"
     SELECT e.row_id,
            e.tenant_id,
            e.stream,
@@ -312,7 +329,7 @@ const SNAPSHOT_PAGE_SQL: &str = r#"
     WHERE ($1::varchar IS NULL OR e.tenant_id = $1) AND e.row_id > $2 AND e.row_id <= $4
     ORDER BY e.row_id ASC
     LIMIT $3
-"#;
+";
 
 #[derive(Debug, FromRow)]
 struct PageRow {
@@ -346,21 +363,21 @@ struct PageRow {
 }
 
 impl PageRow {
-    fn event_row(&self) -> EventRow {
+    fn event_row(&self) -> EventRow<'_> {
         EventRow {
-            stream: self.stream.clone(),
-            specversion: self.specversion.clone(),
-            event_id: self.event_id.clone(),
-            source: self.source.clone(),
-            event_type: self.event_type.clone(),
-            subject: self.subject.clone(),
+            stream: &self.stream,
+            specversion: &self.specversion,
+            event_id: &self.event_id,
+            source: &self.source,
+            event_type: &self.event_type,
+            subject: self.subject.as_deref(),
             occurred_at: self.occurred_at,
-            datacontenttype: self.datacontenttype.clone(),
-            dataschema: self.dataschema.clone(),
-            partitionkey: self.partitionkey.clone(),
-            extensions: self.extensions.clone(),
-            data_kind: self.data_kind.clone(),
-            data: self.data.clone(),
+            datacontenttype: self.datacontenttype.as_deref(),
+            dataschema: self.dataschema.as_deref(),
+            partitionkey: self.partitionkey.as_deref(),
+            extensions: &self.extensions,
+            data_kind: self.data_kind.as_deref(),
+            data: self.data.as_deref(),
         }
     }
 }

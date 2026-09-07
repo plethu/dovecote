@@ -92,30 +92,36 @@ pub(super) fn keepsake_source_row_digest(
     Ok(sha256_hex(&serde_json::to_vec(&evidence)?))
 }
 
-pub(super) fn keepsake_source_row_digest_from_fields(
-    event_type: &str,
-    occurred_at: &str,
-    actor_kind: &str,
-    actor_id: &str,
-    keepsake_id: &str,
-    subject_kind: &str,
-    subject_id: &str,
-    relation_id: &str,
-    decision: &str,
-    context: &str,
-) -> Result<String, Box<dyn Error>> {
-    keepsake_source_row_digest(KeepsakeSourceEvidence {
-        event_type,
-        occurred_at: &OffsetDateTime::parse(occurred_at, &Rfc3339)?.format(&Rfc3339)?,
-        actor_kind,
-        actor_id,
-        keepsake_id,
-        subject_kind,
-        subject_id,
-        relation_id,
-        decision: serde_json::from_str(decision)?,
-        context: serde_json::from_str(context)?,
-    })
+/// Raw legacy audit columns before timestamp and JSON normalization.
+/// Its field order is kept separate from the serialized evidence contract.
+struct KeepsakeSourceRow<'a> {
+    event_type: &'a str,
+    occurred_at: &'a str,
+    actor_kind: &'a str,
+    actor_id: &'a str,
+    keepsake_id: &'a str,
+    subject_kind: &'a str,
+    subject_id: &'a str,
+    relation_id: &'a str,
+    decision: &'a str,
+    context: &'a str,
+}
+
+impl KeepsakeSourceRow<'_> {
+    fn digest(self) -> Result<String, Box<dyn Error>> {
+        keepsake_source_row_digest(KeepsakeSourceEvidence {
+            event_type: self.event_type,
+            occurred_at: &OffsetDateTime::parse(self.occurred_at, &Rfc3339)?.format(&Rfc3339)?,
+            actor_kind: self.actor_kind,
+            actor_id: self.actor_id,
+            keepsake_id: self.keepsake_id,
+            subject_kind: self.subject_kind,
+            subject_id: self.subject_id,
+            relation_id: self.relation_id,
+            decision: serde_json::from_str(self.decision)?,
+            context: serde_json::from_str(self.context)?,
+        })
+    }
 }
 
 pub(super) fn gatekeep_source_row_digest(entry: &str) -> Result<String, Box<dyn Error>> {
@@ -277,9 +283,10 @@ fn reconstructed_fixture_payload(
     Ok(payload)
 }
 
-fn resolve_source(
-    fixture: &Fixture,
-    project: &str,
+/// One backend's joined legacy audit/outbox export, before fixture validation.
+/// Optional fields reflect source SQL NULLs and are validated by `resolve_source`.
+struct SourceRecord<'a> {
+    project: &'a str,
     source_id: u64,
     outbox_id: Option<i64>,
     event_type: Option<String>,
@@ -288,10 +295,29 @@ fn resolve_source(
     reconstructed_payload: Option<Vec<u8>>,
     occurred_at: Option<String>,
     delivered_at: Option<String>,
-    source_export_format: &str,
+    source_export_format: &'a str,
     exact_source_bytes: bool,
     audit_id: u64,
+}
+
+fn resolve_source(
+    fixture: &Fixture,
+    source: SourceRecord<'_>,
 ) -> Result<SourceEvent, Box<dyn Error>> {
+    let SourceRecord {
+        project,
+        source_id,
+        outbox_id,
+        event_type,
+        normalized_payload,
+        payload,
+        reconstructed_payload,
+        occurred_at,
+        delivered_at,
+        source_export_format,
+        exact_source_bytes,
+        audit_id,
+    } = source;
     let has_outbox = outbox_id.is_some();
     let expected = expected_source(fixture, project, source_id, has_outbox)?;
     // For a row without a legacy outbox payload, the historical fixture owns
@@ -379,7 +405,10 @@ fn resolve_source(
 #[cfg(test)]
 mod tests {
     use super::super::ledger::sha256_hex;
-    use super::{Fixture, FixtureEvent, SourceHighWaters, canonical_json_export, resolve_source};
+    use super::{
+        Fixture, FixtureEvent, SourceHighWaters, SourceRecord, canonical_json_export,
+        resolve_source,
+    };
     use std::collections::BTreeMap;
 
     #[test]
@@ -436,18 +465,20 @@ mod tests {
         for export_format in ["postgres-jsonb-canonical-v1", "mysql-json-canonical-v1"] {
             let event = resolve_source(
                 &fixture,
-                "keepsake",
-                101,
-                Some(101),
-                Some(String::from("keepsake.audit_event_recorded")),
-                Some(original.to_owned()),
-                Some(original.to_owned()),
-                None,
-                Some(String::from("2026-01-01T00:00:01Z")),
-                None,
-                export_format,
-                false,
-                101,
+                SourceRecord {
+                    project: "keepsake",
+                    source_id: 101,
+                    outbox_id: Some(101),
+                    event_type: Some(String::from("keepsake.audit_event_recorded")),
+                    normalized_payload: Some(original.to_owned()),
+                    payload: Some(original.to_owned()),
+                    reconstructed_payload: None,
+                    occurred_at: Some(String::from("2026-01-01T00:00:01Z")),
+                    delivered_at: None,
+                    source_export_format: export_format,
+                    exact_source_bytes: false,
+                    audit_id: 101,
+                },
             )
             .expect("canonical backend export matches the fixture semantically");
             assert_eq!(

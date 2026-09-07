@@ -1,4 +1,4 @@
-//! MySQL/MariaDB live and finite consistent-snapshot paging.
+//! `MySQL`/`MariaDB` live and finite consistent-snapshot paging.
 
 use crate::{backend, error::PageError, hydrate};
 use dovecote::{
@@ -105,7 +105,7 @@ pub(crate) async fn begin_snapshot_for_scope(
     })
 }
 
-/// A finite, connection-bound InnoDB consistent snapshot. It is deliberately
+/// A finite, connection-bound `InnoDB` consistent snapshot. It is deliberately
 /// not `Send`, so callers cannot move the snapshot between executors.
 ///
 /// ```compile_fail
@@ -124,18 +124,25 @@ pub struct SnapshotPager {
 
 impl SnapshotPager {
     /// Returns the last row ID returned by this pager.
+    #[must_use]
     pub const fn cursor(&self) -> Option<RowId> {
         self.cursor
     }
     /// Returns the snapshot's fixed upper row-ID bound.
+    #[must_use]
     pub const fn upper_bound(&self) -> Option<RowId> {
         self.upper_bound
     }
     /// Reports whether all rows in the snapshot have been returned.
+    #[must_use]
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted
     }
     /// Reads the next bounded page from this snapshot.
+    ///
+    /// # Errors
+    /// Returns an error if a stored event or delivery cannot be validated or the
+    /// database read fails. Roll back or drop the pager after a failed read.
     pub async fn next_page(&mut self, limit: Limit) -> Result<Vec<PagedEvent>, PageError> {
         if self.exhausted {
             return Ok(Vec::new());
@@ -163,6 +170,10 @@ impl SnapshotPager {
         Ok(rows)
     }
     /// Commits and closes the snapshot transaction.
+    ///
+    /// # Errors
+    /// Returns a database error if committing the read transaction fails. A lost
+    /// commit response does not establish whether the server committed.
     pub async fn finish(self) -> Result<(), PageError> {
         self.transaction
             .commit()
@@ -170,6 +181,9 @@ impl SnapshotPager {
             .map_err(|source| PageError::sql("finish snapshot transaction", source))
     }
     /// Rolls back and closes the snapshot transaction.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn rollback(self) -> Result<(), PageError> {
         self.transaction
             .rollback()
@@ -177,6 +191,9 @@ impl SnapshotPager {
             .map_err(|source| PageError::sql("rollback snapshot transaction", source))
     }
     /// Rolls back and closes the snapshot transaction.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn close(self) -> Result<(), PageError> {
         self.rollback().await
     }

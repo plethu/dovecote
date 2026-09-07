@@ -26,9 +26,9 @@ pub(crate) fn validate_string(
 
     if value.chars().any(|character| {
         character.is_control()
-            || (0xFDD0..=0xFDEF).contains(&(character as u32))
-            || character as u32 & 0xFFFF == 0xFFFF
-            || character as u32 & 0xFFFF == 0xFFFE
+            || (0xFDD0..=0xFDEF).contains(&(u32::from(character)))
+            || u32::from(character) & 0xFFFF == 0xFFFF
+            || u32::from(character) & 0xFFFF == 0xFFFE
     }) {
         return Err(ValidationError::new(field, ValidationKind::Characters));
     }
@@ -49,48 +49,30 @@ pub(crate) fn validate_uri_reference(
 }
 
 pub(crate) fn validate_traceparent(value: &str) -> Result<(), ValidationError> {
-    const VERSION_END: usize = TRACEPARENT_VERSION_CHARS;
-    const TRACE_ID_START: usize = VERSION_END + 1;
-    const TRACE_ID_END: usize = TRACE_ID_START + TRACEPARENT_TRACE_ID_CHARS;
-    const PARENT_ID_START: usize = TRACE_ID_END + 1;
-    const PARENT_ID_END: usize = PARENT_ID_START + TRACEPARENT_PARENT_ID_CHARS;
-    const FLAGS_START: usize = PARENT_ID_END + 1;
-    const CURRENT_LENGTH: usize = FLAGS_START + TRACEPARENT_FLAGS_CHARS;
-
-    let bytes = value.as_bytes();
-    let valid_lower_hex = |part: &[u8]| {
-        part.iter()
-            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(byte))
+    let mut parts = value.splitn(5, '-');
+    let invalid = || ValidationError::new("traceparent", ValidationKind::TraceContext);
+    let version = parts.next().ok_or_else(invalid)?;
+    let trace_id = parts.next().ok_or_else(invalid)?;
+    let parent_id = parts.next().ok_or_else(invalid)?;
+    let flags = parts.next().ok_or_else(invalid)?;
+    let future_fields = parts.next();
+    let valid_lower_hex = |part: &str, width: usize| {
+        part.len() == width
+            && part
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
     };
-    let invalid = bytes.len() < CURRENT_LENGTH
-        || bytes.get(VERSION_END) != Some(&b'-')
-        || bytes.get(TRACE_ID_END) != Some(&b'-')
-        || bytes.get(PARENT_ID_END) != Some(&b'-')
-        || !valid_lower_hex(&bytes[..VERSION_END])
-        || !valid_lower_hex(&bytes[TRACE_ID_START..TRACE_ID_END])
-        || !valid_lower_hex(&bytes[PARENT_ID_START..PARENT_ID_END])
-        || !valid_lower_hex(&bytes[FLAGS_START..CURRENT_LENGTH])
-        || &bytes[..VERSION_END] == b"ff"
-        || bytes[TRACE_ID_START..TRACE_ID_END]
-            .iter()
-            .all(|byte| *byte == b'0')
-        || bytes[PARENT_ID_START..PARENT_ID_END]
-            .iter()
-            .all(|byte| *byte == b'0')
-        || if &bytes[..VERSION_END] == b"00" {
-            bytes.len() != CURRENT_LENGTH
-                || !matches!(&bytes[FLAGS_START..CURRENT_LENGTH], b"00" | b"01")
-        } else {
-            bytes.len() > CURRENT_LENGTH && bytes.get(CURRENT_LENGTH) != Some(&b'-')
-        };
-
-    if invalid {
-        return Err(ValidationError::new(
-            "traceparent",
-            ValidationKind::TraceContext,
-        ));
+    if !valid_lower_hex(version, TRACEPARENT_VERSION_CHARS)
+        || !valid_lower_hex(trace_id, TRACEPARENT_TRACE_ID_CHARS)
+        || !valid_lower_hex(parent_id, TRACEPARENT_PARENT_ID_CHARS)
+        || !valid_lower_hex(flags, TRACEPARENT_FLAGS_CHARS)
+        || version == "ff"
+        || trace_id.bytes().all(|byte| byte == b'0')
+        || parent_id.bytes().all(|byte| byte == b'0')
+        || (version == "00" && (future_fields.is_some() || !matches!(flags, "00" | "01")))
+    {
+        return Err(invalid());
     }
-
     Ok(())
 }
 
@@ -145,31 +127,24 @@ pub(crate) fn validate_tracestate(value: &str) -> Result<(), ValidationError> {
 }
 
 fn valid_tracestate_key(key: &str) -> bool {
-    let parts: Vec<_> = key.split('@').collect();
-    if parts.len() > 2 {
-        return false;
+    match key.split_once('@') {
+        Some((tenant, system)) => {
+            valid_tracestate_key_part(tenant, MAX_TRACESTATE_TENANT_ID_BYTES, true)
+                && valid_tracestate_key_part(system, MAX_TRACESTATE_SYSTEM_ID_BYTES, false)
+        }
+        None => valid_tracestate_key_part(key, MAX_TRACESTATE_KEY_BYTES, false),
     }
-    parts.iter().enumerate().all(|(index, part)| {
-        !part.is_empty()
-            && part.len()
-                <= if index == 0 && parts.len() == 2 {
-                    MAX_TRACESTATE_TENANT_ID_BYTES
-                } else if index == 1 {
-                    MAX_TRACESTATE_SYSTEM_ID_BYTES
-                } else {
-                    MAX_TRACESTATE_KEY_BYTES
-                }
-            && if parts.len() == 1 {
-                part.as_bytes()[0].is_ascii_lowercase()
-            } else if index == 0 {
-                part.as_bytes()[0].is_ascii_lowercase() || part.as_bytes()[0].is_ascii_digit()
-            } else {
-                part.as_bytes()[0].is_ascii_lowercase()
-            }
-            && part.bytes().all(|byte| {
-                byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_*-/".contains(&byte)
-            })
-    })
+}
+
+fn valid_tracestate_key_part(part: &str, maximum: usize, tenant: bool) -> bool {
+    let Some(first) = part.as_bytes().first() else {
+        return false;
+    };
+    part.len() <= maximum
+        && (first.is_ascii_lowercase() || (tenant && first.is_ascii_digit()))
+        && part.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || b"_*-/".contains(&byte)
+        })
 }
 
 pub(crate) fn format_timestamp(value: OffsetDateTime) -> String {

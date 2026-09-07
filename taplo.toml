@@ -1,5 +1,7 @@
-include = ["**/*.toml"]
-exclude = [".git/**", "target/**", "tests/sibling-worktrees/**"]
+# Keep discovery inside maintained sources: fixture siblings can point back to
+# this checkout, and a repository-wide recursive glob traverses those cycles.
+include = ["*.toml", "crates/**/*.toml", "tests/fixture-runner/Cargo.toml"]
+exclude = ["**/target/**"]
 
 [formatting]
 reorder_keys = false

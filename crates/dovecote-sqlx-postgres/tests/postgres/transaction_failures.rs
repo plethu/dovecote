@@ -44,7 +44,7 @@ async fn lock_timeout_is_a_typed_transient_mutation_error_when_configured()
             }) => assert_eq!(
                 source
                     .as_database_error()
-                    .and_then(|db| db.code().map(|code| code.into_owned())),
+                    .and_then(|db| db.code().map(std::borrow::Cow::into_owned)),
                 Some("55P03".to_owned())
             ),
             other => return Err(format!("expected typed lock timeout, got {other:?}").into()),
@@ -104,7 +104,7 @@ async fn statement_timeout_rolls_back_and_is_typed_when_configured() -> Result<(
             }) => assert_eq!(
                 source
                     .as_database_error()
-                    .and_then(|db| db.code().map(|code| code.into_owned())),
+                    .and_then(|db| db.code().map(std::borrow::Cow::into_owned)),
                 Some("57014".to_owned())
             ),
             other => return Err(format!("expected typed statement timeout, got {other:?}").into()),

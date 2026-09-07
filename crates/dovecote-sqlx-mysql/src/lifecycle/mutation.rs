@@ -1,4 +1,4 @@
-//! MySQL/MariaDB claim-token-fenced delivery mutations.
+//! `MySQL`/`MariaDB` claim-token-fenced delivery mutations.
 
 use crate::{backend, error::MutationError};
 use dovecote::{

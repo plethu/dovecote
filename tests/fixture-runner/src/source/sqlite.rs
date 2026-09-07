@@ -1,8 +1,8 @@
 //! SQLite legacy source resolution.
 
 use super::{
-    Fixture, SourceEvent, SourceHighWaters, gatekeep_source_row_digest, invalid,
-    keepsake_source_row_digest_from_fields, reconstructed_fixture_payload, resolve_source,
+    Fixture, KeepsakeSourceRow, SourceEvent, SourceHighWaters, SourceRecord,
+    gatekeep_source_row_digest, invalid, reconstructed_fixture_payload, resolve_source,
 };
 use crate::ledger::SourceCursors;
 use std::error::Error;
@@ -88,42 +88,45 @@ pub(crate) async fn resolve_sqlite(
         let source_id = u64::try_from(row.outbox_id.unwrap_or(row.audit_id))?;
         events.push(resolve_source(
             fixture,
-            "keepsake",
-            source_id,
-            row.outbox_id,
-            row.outbox_event_type,
-            Some(row.decision.clone()),
-            row.outbox_payload.clone(),
-            if row.outbox_id.is_none() {
-                Some(reconstructed_fixture_payload(
-                    fixture,
-                    "keepsake",
-                    source_id,
-                    &keepsake_source_row_digest_from_fields(
-                        &row.event_type,
-                        &row.occurred_at,
-                        &row.actor_kind,
-                        &row.actor_id,
-                        &row.keepsake_id,
-                        &row.subject_kind,
-                        &row.subject_id,
-                        &row.relation_id,
-                        &row.decision,
-                        &row.context_attributes,
-                    )?,
-                )?)
-            } else {
-                None
+            SourceRecord {
+                project: "keepsake",
+                source_id,
+                outbox_id: row.outbox_id,
+                event_type: row.outbox_event_type,
+                normalized_payload: Some(row.decision.clone()),
+                payload: row.outbox_payload.clone(),
+                reconstructed_payload: if row.outbox_id.is_none() {
+                    Some(reconstructed_fixture_payload(
+                        fixture,
+                        "keepsake",
+                        source_id,
+                        &KeepsakeSourceRow {
+                            event_type: &row.event_type,
+                            occurred_at: &row.occurred_at,
+                            actor_kind: &row.actor_kind,
+                            actor_id: &row.actor_id,
+                            keepsake_id: &row.keepsake_id,
+                            subject_kind: &row.subject_kind,
+                            subject_id: &row.subject_id,
+                            relation_id: &row.relation_id,
+                            decision: &row.decision,
+                            context: &row.context_attributes,
+                        }
+                        .digest()?,
+                    )?)
+                } else {
+                    None
+                },
+                occurred_at: Some(row.occurred_at),
+                delivered_at: row.delivered_at,
+                source_export_format: if row.outbox_id.is_some() {
+                    "sqlite-text-v1"
+                } else {
+                    "keepsake.audit.json.v1"
+                },
+                exact_source_bytes: row.outbox_id.is_some(),
+                audit_id: u64::try_from(row.audit_id)?,
             },
-            Some(row.occurred_at),
-            row.delivered_at,
-            if row.outbox_id.is_some() {
-                "sqlite-text-v1"
-            } else {
-                "keepsake.audit.json.v1"
-            },
-            row.outbox_id.is_some(),
-            u64::try_from(row.audit_id)?,
         )?);
         if row.claimed_by.is_some()
             && row
@@ -143,31 +146,33 @@ pub(crate) async fn resolve_sqlite(
         let source_id = u64::try_from(row.outbox_id.unwrap_or(row.decision_id))?;
         events.push(resolve_source(
             fixture,
-            "gatekeep",
-            source_id,
-            row.outbox_id,
-            row.outbox_event_type,
-            Some(row.entry.clone()),
-            row.outbox_payload.clone(),
-            if row.outbox_id.is_none() {
-                Some(reconstructed_fixture_payload(
-                    fixture,
-                    "gatekeep",
-                    source_id,
-                    &gatekeep_source_row_digest(&row.entry)?,
-                )?)
-            } else {
-                None
+            SourceRecord {
+                project: "gatekeep",
+                source_id,
+                outbox_id: row.outbox_id,
+                event_type: row.outbox_event_type,
+                normalized_payload: Some(row.entry.clone()),
+                payload: row.outbox_payload.clone(),
+                reconstructed_payload: if row.outbox_id.is_none() {
+                    Some(reconstructed_fixture_payload(
+                        fixture,
+                        "gatekeep",
+                        source_id,
+                        &gatekeep_source_row_digest(&row.entry)?,
+                    )?)
+                } else {
+                    None
+                },
+                occurred_at: None,
+                delivered_at: row.delivered_at,
+                source_export_format: if row.outbox_id.is_some() {
+                    "sqlite-text-v1"
+                } else {
+                    "gatekeep-audit-json-v1"
+                },
+                exact_source_bytes: row.outbox_id.is_some(),
+                audit_id: u64::try_from(row.decision_id)?,
             },
-            None,
-            row.delivered_at,
-            if row.outbox_id.is_some() {
-                "sqlite-text-v1"
-            } else {
-                "gatekeep-audit-json-v1"
-            },
-            row.outbox_id.is_some(),
-            u64::try_from(row.decision_id)?,
         )?);
         if row.claimed_by.is_some()
             && row

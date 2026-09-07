@@ -25,7 +25,7 @@ pub const MAX_TENANT_ID_BYTES: usize = 255;
 pub const MAX_EVENT_ID_BYTES: usize = 1_024;
 /// Maximum UTF-8 byte length of an event type.
 pub const MAX_EVENT_TYPE_BYTES: usize = 1_024;
-/// Maximum UTF-8 byte length of a CloudEvents subject.
+/// Maximum UTF-8 byte length of a `CloudEvents` subject.
 pub const MAX_SUBJECT_BYTES: usize = 2_048;
 /// Maximum UTF-8 byte length of an event source URI-reference.
 pub const MAX_SOURCE_BYTES: usize = 2_048;
@@ -84,6 +84,9 @@ pub struct RowId(i64);
 
 impl RowId {
     /// Creates a row ID, rejecting zero and negative values.
+    ///
+    /// # Errors
+    /// Returns a range error for zero or a negative row identifier.
     pub const fn new(value: i64) -> Result<Self, ValidationError> {
         if value > 0 {
             Ok(Self(value))
@@ -97,6 +100,7 @@ impl RowId {
     }
 
     /// Returns the database representation.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }
@@ -108,6 +112,9 @@ pub struct AttemptCount(i64);
 
 impl AttemptCount {
     /// Creates an attempt count, rejecting negative values.
+    ///
+    /// # Errors
+    /// Returns a range error for a negative attempt count.
     pub const fn new(value: i64) -> Result<Self, ValidationError> {
         if value >= 0 {
             Ok(Self(value))
@@ -121,6 +128,7 @@ impl AttemptCount {
     }
 
     /// Returns the counter value.
+    #[must_use]
     pub const fn get(self) -> i64 {
         self.0
     }
@@ -132,6 +140,9 @@ pub struct Limit(u32);
 
 impl Limit {
     /// Creates a limit in the inclusive public range `1..=1000`.
+    ///
+    /// # Errors
+    /// Returns a range error unless the limit is in `1..=1000`.
     pub const fn new(value: u32) -> Result<Self, ValidationError> {
         if value >= 1 && value <= MAX_CLAIM_OR_PAGE_LIMIT {
             Ok(Self(value))
@@ -145,6 +156,7 @@ impl Limit {
     }
 
     /// Returns the numeric limit.
+    #[must_use]
     pub const fn get(self) -> u32 {
         self.0
     }
@@ -156,12 +168,16 @@ pub struct Lease(Duration);
 
 impl Lease {
     /// Creates a lease within the supported duration and precision bounds.
+    ///
+    /// # Errors
+    /// Returns an error for a zero or excessive lease, or sub-millisecond precision.
     pub fn new(value: Duration) -> Result<Self, ValidationError> {
         validate_duration("lease", value, false, MAX_LEASE)?;
         Ok(Self(value))
     }
 
     /// Returns the underlying duration.
+    #[must_use]
     pub const fn get(self) -> Duration {
         self.0
     }
@@ -173,12 +189,16 @@ pub struct Delay(Duration);
 
 impl Delay {
     /// Creates a delay within the supported duration and precision bounds.
+    ///
+    /// # Errors
+    /// Returns an error for an excessive delay or sub-millisecond precision.
     pub fn new(value: Duration) -> Result<Self, ValidationError> {
         validate_duration("delay or backoff", value, true, MAX_BACKOFF_OR_DELAY)?;
         Ok(Self(value))
     }
 
     /// Returns the underlying duration.
+    #[must_use]
     pub const fn get(self) -> Duration {
         self.0
     }
@@ -215,6 +235,9 @@ pub struct EventSizeLimit(usize);
 
 impl EventSizeLimit {
     /// Creates a non-zero event-size limit.
+    ///
+    /// # Errors
+    /// Returns a range error for a zero byte limit.
     pub const fn new(value: usize) -> Result<Self, ValidationError> {
         if value > 0 {
             Ok(Self(value))
@@ -228,6 +251,7 @@ impl EventSizeLimit {
     }
 
     /// Returns the configured byte limit.
+    #[must_use]
     pub const fn get(self) -> usize {
         self.0
     }
@@ -245,6 +269,9 @@ pub struct WorkerId(String);
 
 impl WorkerId {
     /// Creates a worker identity.
+    ///
+    /// # Errors
+    /// Returns an error for an empty, overlong, or invalid-character worker identity.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("worker_id", &value, Some(MAX_WORKER_ID_BYTES), false).map_err(
@@ -260,6 +287,7 @@ impl WorkerId {
     }
 
     /// Returns the worker identity as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -274,6 +302,10 @@ pub struct Failure {
 
 impl Failure {
     /// Creates a failure from a stable code and redacted detail.
+    ///
+    /// # Errors
+    /// Returns an error when either diagnostic field exceeds its byte bound or
+    /// contains forbidden characters; the failure code must also be nonempty.
     pub fn new(
         code: impl Into<String>,
         detail: impl Into<String>,
@@ -306,11 +338,13 @@ impl Failure {
     }
 
     /// Returns the stable failure code.
+    #[must_use]
     pub fn code(&self) -> &str {
         &self.code
     }
 
     /// Returns the redacted failure detail.
+    #[must_use]
     pub fn detail(&self) -> &str {
         &self.detail
     }
@@ -322,6 +356,9 @@ pub struct QuarantineReason(String);
 
 impl QuarantineReason {
     /// Creates a quarantine reason.
+    ///
+    /// # Errors
+    /// Returns an error for an empty, overlong, or invalid-character reason.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string(
@@ -341,6 +378,7 @@ impl QuarantineReason {
     }
 
     /// Returns the reason as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -351,13 +389,7 @@ pub(crate) fn validate_instant(
     value: OffsetDateTime,
 ) -> Result<(), ValidationError> {
     let minimum = OffsetDateTime::UNIX_EPOCH;
-    let maximum = OffsetDateTime::new_in_offset(
-        time::Date::from_calendar_date(9999, time::Month::December, 31)
-            .expect("the documented upper date is valid"),
-        time::Time::from_hms_micro(23, 59, 59, 999_999)
-            .expect("the documented upper time is valid"),
-        time::UtcOffset::UTC,
-    );
+    let maximum = time::macros::datetime!(9999-12-31 23:59:59.999999 UTC);
 
     if !(minimum..=maximum).contains(&value) {
         return Err(ValidationError::with_operation(

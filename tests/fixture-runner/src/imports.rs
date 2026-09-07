@@ -1,7 +1,7 @@
 //! Backend-specific import orchestration.
 
 use super::{
-    fixture::{Fixture, SourceHighWaters, build_event, delivery_state, invalid},
+    fixture::{Fixture, RunMode, SourceHighWaters, build_event, delivery_state, invalid},
     ledger::{RESOLUTION_BATCH_SIZE, persist_ledger, persist_progress, read_source_cursors},
     source::{resolve_mysql, resolve_postgres, resolve_sqlite},
 };
@@ -16,8 +16,7 @@ pub(super) async fn run_imports_sqlite(
     url: &str,
     high_waters: SourceHighWaters,
     stop_after: Option<usize>,
-    rollback: bool,
-    crash: bool,
+    mode: RunMode,
 ) -> Result<(), Box<dyn Error>> {
     use dovecote::TenantId;
     use dovecote_sqlx_sqlite::SqliteDovecote;
@@ -62,7 +61,7 @@ pub(super) async fn run_imports_sqlite(
         imported.push((item, imported_row_id));
     }
 
-    if rollback {
+    if mode == RunMode::Rollback {
         transaction.rollback().await?;
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dovecote_events")
             .fetch_one(adapter.pool())
@@ -77,7 +76,7 @@ pub(super) async fn run_imports_sqlite(
     }
 
     transaction.commit().await?;
-    if crash {
+    if mode == RunMode::CrashBeforeCheckpoint {
         return Err(Box::new(io::Error::new(
             ErrorKind::Interrupted,
             "fixture runner crashed after committing the batch before external checkpoint",
@@ -94,8 +93,7 @@ pub(super) async fn run_imports_postgres(
     url: &str,
     high_waters: SourceHighWaters,
     stop_after: Option<usize>,
-    rollback: bool,
-    crash: bool,
+    mode: RunMode,
 ) -> Result<(), Box<dyn Error>> {
     use dovecote::TenantId;
     use dovecote_sqlx_postgres::PostgresDovecote;
@@ -138,7 +136,7 @@ pub(super) async fn run_imports_postgres(
         imported.push((item, imported_row_id));
     }
 
-    if rollback {
+    if mode == RunMode::Rollback {
         transaction.rollback().await?;
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dovecote_events")
             .fetch_one(adapter.pool())
@@ -153,7 +151,7 @@ pub(super) async fn run_imports_postgres(
     }
 
     transaction.commit().await?;
-    if crash {
+    if mode == RunMode::CrashBeforeCheckpoint {
         return Err(Box::new(io::Error::new(
             ErrorKind::Interrupted,
             "fixture runner crashed after committing the batch before external checkpoint",
@@ -170,8 +168,7 @@ pub(super) async fn run_imports_mysql(
     url: &str,
     high_waters: SourceHighWaters,
     stop_after: Option<usize>,
-    rollback: bool,
-    crash: bool,
+    mode: RunMode,
 ) -> Result<(), Box<dyn Error>> {
     use dovecote::TenantId;
     use dovecote_sqlx_mysql::MySqlDovecote;
@@ -233,7 +230,7 @@ pub(super) async fn run_imports_mysql(
         imported.push((item, imported_row_id));
     }
 
-    if rollback {
+    if mode == RunMode::Rollback {
         transaction.rollback().await?;
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM dovecote_events")
             .fetch_one(adapter.pool())
@@ -248,7 +245,7 @@ pub(super) async fn run_imports_mysql(
     }
 
     transaction.commit().await?;
-    if crash {
+    if mode == RunMode::CrashBeforeCheckpoint {
         return Err(Box::new(io::Error::new(
             ErrorKind::Interrupted,
             "fixture runner crashed after committing the batch before external checkpoint",

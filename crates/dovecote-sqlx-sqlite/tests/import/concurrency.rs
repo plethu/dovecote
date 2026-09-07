@@ -25,7 +25,7 @@ async fn competing_imports_have_one_canonical_winner() -> Result<(), Box<dyn std
         let mut second = tokio::spawn(async move {
             before_begin
                 .send(())
-                .map_err(|_| "race test receiver dropped".to_owned())?;
+                .map_err(|()| "race test receiver dropped".to_owned())?;
             let mut transaction = second_adapter
                 .begin_write()
                 .await

@@ -30,6 +30,27 @@ as well when changing a backend or public contract. Examples and rustdoc are
 part of the public API and must compile under the repository's documented
 gates.
 
+For focused checks, use `mise exec -- just clippy` or
+`mise exec -- just test <filter>`. The canonical gate also checks unused crate
+dependencies with cargo-machete. The [maintainability review](docs/maintainability.md)
+records checked ownership boundaries and deliberate differences from generic
+lint defaults.
+
+The standalone migration runner has its own workspace. To check it against this
+checkout, first prepare its ignored sibling path from the repository root:
+
+```sh
+mkdir -p tests/sibling-worktrees
+ln -s ../.. tests/sibling-worktrees/carrier
+mise exec -- just check-migration-runner
+```
+
+Use the symlink command only when that path is absent; preserve an existing
+reviewed checkout. CI supplies the same path explicitly. `just check` runs this
+lane when the fixture dependency is available and visibly skips it otherwise.
+The complete-history harness also prepares the documented local sibling layout
+and validates historical migration hashes before touching a database.
+
 ## Database evidence
 
 Live database tests are required when a backend claim or release is being
@@ -109,6 +130,9 @@ the repository and remove unsupported claims, invented citations, and generic
 promotional prose. Do not add agent attribution trailers.
 
 ## Publishing
+
+The [release procedure](docs/releases.md) records the required CI jobs, sibling
+fixture revisions, compatibility boundary and publication evidence.
 
 Publish `dovecote` first and wait for crates.io to serve the new version. Then
 run `DOVECOTE_VERIFY_PUBLISHED_ADAPTERS=1 mise run check`. That mode packages

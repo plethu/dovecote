@@ -1,4 +1,4 @@
-//! SQLite schema verification.
+//! `SQLite` schema verification.
 
 use crate::{
     error::SchemaError,
@@ -17,6 +17,10 @@ struct SchemaMarker {
 
 /// Verifies the exact v2 table shape, constraints, indexes, and foreign key of
 /// the installed schema. It never applies a migration.
+///
+/// # Errors
+/// Returns an error for an unsupported backend, missing or incompatible
+/// migration markers, tables, constraints or indexes, or failed catalog reads.
 pub async fn check_schema(pool: &SqlitePool) -> Result<(), SchemaError> {
     let mut connection = pool
         .acquire()
@@ -196,7 +200,7 @@ async fn check_schema_marker(
         || marker.minimum_crate_major != i64::from(minimum.major())
         || marker.minimum_crate_minor != i64::from(minimum.minor())
         || marker.minimum_crate_patch != i64::from(minimum.patch())
-        || marker.rolling_compatible != if migration.rolling_compatible() { 1 } else { 0 }
+        || marker.rolling_compatible != i64::from(migration.rolling_compatible())
     {
         return Err(mismatch("schema marker is incompatible with this adapter"));
     }

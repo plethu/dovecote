@@ -52,7 +52,7 @@ async fn migration_import_competing_transactions_have_one_canonical_winner()
             .map_err(|error| error.to_string())?;
         before_import
             .send(())
-            .map_err(|_| "race test receiver dropped".to_owned())?;
+            .map_err(|()| "race test receiver dropped".to_owned())?;
         let outcome = second_adapter
             .import_for_migration(
                 &mut transaction,

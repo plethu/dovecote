@@ -1,6 +1,6 @@
-//! SQLite claims and token-fenced lifecycle mutations.
+//! `SQLite` claims and token-fenced lifecycle mutations.
 //!
-//! SQLite has one writer at a time. Every write operation explicitly acquires
+//! `SQLite` has one writer at a time. Every write operation explicitly acquires
 //! that writer slot with `BEGIN IMMEDIATE`, performs its short state change,
 //! and commits before returning. No transport work occurs while the lock is
 //! held.
@@ -47,10 +47,12 @@ pub(crate) async fn claim_for_scope(
     let mut entropy = OsEntropy;
     claim_with_entropy_scoped(
         pool,
-        tenant_id,
-        worker,
-        lease_for,
-        limit,
+        ClaimRequest {
+            tenant_id,
+            worker: &worker,
+            lease_for,
+            limit,
+        },
         busy,
         &mut entropy,
         None,
@@ -69,29 +71,39 @@ async fn claim_with_entropy<E: EntropySource>(
     failpoint: Option<&AtomicBool>,
 ) -> Result<Vec<ClaimedEvent>, ClaimError> {
     claim_with_entropy_scoped(
-        pool, None, worker, lease_for, limit, busy, entropy, failpoint,
+        pool,
+        ClaimRequest {
+            tenant_id: None,
+            worker: &worker,
+            lease_for,
+            limit,
+        },
+        busy,
+        entropy,
+        failpoint,
     )
     .await
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn claim_with_entropy_scoped<E: EntropySource>(
-    pool: &SqlitePool,
-    tenant_id: Option<&TenantId>,
-    worker: WorkerId,
+/// Scope and lease requested by one claimant, retained across `SQLite` busy retries.
+#[derive(Clone, Copy)]
+struct ClaimRequest<'a> {
+    tenant_id: Option<&'a TenantId>,
+    worker: &'a WorkerId,
     lease_for: Lease,
     limit: Limit,
+}
+
+async fn claim_with_entropy_scoped<E: EntropySource>(
+    pool: &SqlitePool,
+    request: ClaimRequest<'_>,
     busy: BusyConfig,
     entropy: &mut E,
     failpoint: Option<&AtomicBool>,
 ) -> Result<Vec<ClaimedEvent>, ClaimError> {
     let mut tries = 0;
     loop {
-        match claim_once(
-            pool, tenant_id, &worker, lease_for, limit, busy, entropy, failpoint,
-        )
-        .await
-        {
+        match claim_once(pool, request, busy, entropy, failpoint).await {
             Err(error) if error.busy_source().is_some() && tries < busy.retries() => {
                 tries += 1;
                 continue;
@@ -102,17 +114,19 @@ async fn claim_with_entropy_scoped<E: EntropySource>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn claim_once(
     pool: &SqlitePool,
-    tenant_id: Option<&TenantId>,
-    worker: &WorkerId,
-    lease_for: Lease,
-    limit: Limit,
+    request: ClaimRequest<'_>,
     busy: BusyConfig,
     entropy: &mut impl EntropySource,
     _failpoint: Option<&AtomicBool>,
 ) -> Result<Vec<ClaimedEvent>, ClaimError> {
+    let ClaimRequest {
+        tenant_id,
+        worker,
+        lease_for,
+        limit,
+    } = request;
     let lease_ms = checked_milliseconds(lease_for.get()).map_err(ClaimError::serialization)?;
     let mut transaction = begin_immediate(pool, busy, "claim")
         .await
@@ -194,7 +208,7 @@ async fn claim_once(
             }
         };
         used_tokens.push(token);
-        let event = match hydrate_event(&candidate) {
+        let event = match hydrate_event(&candidate.event_row()) {
             Ok(value) => value,
             Err(error) => {
                 return rollback_claim(transaction, ClaimError::serialization(error)).await;

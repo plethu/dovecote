@@ -17,7 +17,7 @@ pub(super) fn trigger_action_matches(kind: &str, action: &str) -> bool {
         }
         _ => return false,
     };
-    normalize_trigger(action) == expected.replace(" ", "")
+    normalize_trigger(action) == expected.replace(' ', "")
 }
 pub(super) fn normalize_check_clause(name: &str, clause: &str) -> String {
     let mut normalized = normalize(clause);
@@ -33,24 +33,7 @@ pub(super) fn normalize_check_clause(name: &str, clause: &str) -> String {
     // MySQL reports OCTET_LENGTH(binary/blob) as LENGTH(binary/blob) on some
     // releases.  Canonicalize only the binary/blob operands used by this
     // migration; LENGTH on another expression remains a different clause.
-    for column in binary_length_columns(name) {
-        let length = format!("length({column})");
-        let octet_length = format!("octet_length({column})");
-        let mut offset = 0;
-        let mut rewritten = String::with_capacity(normalized.len());
-        while let Some(found) = normalized[offset..].find(&length) {
-            let start = offset + found;
-            rewritten.push_str(&normalized[offset..start]);
-            if normalized.as_bytes()[..start].ends_with(b"octet_") {
-                rewritten.push_str(&normalized[start..start + length.len()]);
-            } else {
-                rewritten.push_str(&octet_length);
-            }
-            offset = start + length.len();
-        }
-        rewritten.push_str(&normalized[offset..]);
-        normalized = rewritten;
-    }
+    normalized = replace_length_aliases(normalized, binary_length_columns(name));
 
     strip_redundant_outer_parentheses(&normalized)
 }
@@ -80,61 +63,61 @@ fn binary_length_columns(name: &str) -> &'static [&'static str] {
     }
 }
 
-fn strip_redundant_outer_parentheses(value: &str) -> String {
-    let mut value = value;
-    while value.starts_with('(')
-        && value.ends_with(')')
-        && outer_parentheses_enclose_expression(value)
+fn strip_redundant_outer_parentheses(mut value: &str) -> String {
+    while let Some(inner) = value
+        .strip_prefix('(')
+        .and_then(|value| value.strip_suffix(')'))
     {
-        value = &value[1..value.len() - 1];
+        if !outer_parentheses_enclose_expression(value) {
+            break;
+        }
+        value = inner;
     }
     value.to_owned()
 }
 
-fn outer_parentheses_enclose_expression(value: &str) -> bool {
-    let bytes = value.as_bytes();
-    let mut depth = 0_u32;
-    let mut in_string = false;
-    let mut escaped = false;
-    let mut index = 0;
-    while index < bytes.len() {
-        let byte = bytes[index];
-        // This is a byte-level lexer state machine, not ordered policy.
-        // ast-grep-ignore: rust-elseif-cascade
-        if in_string {
-            let (still_in_string, escaped_next, skip_next) =
-                quoted_byte_state(bytes, index, escaped);
-            in_string = still_in_string;
-            escaped = escaped_next;
-            index += usize::from(skip_next);
-        // ast-grep-ignore: rust-elseif-cascade
-        } else if byte == b'\'' {
-            in_string = true;
-        } else if byte == b'(' {
-            depth += 1;
-        } else if byte == b')' {
-            if depth == 0 {
-                return false;
-            }
-            depth -= 1;
-            if depth == 0 && index != bytes.len() - 1 {
-                return false;
-            }
-        }
-        index += 1;
-    }
-    !in_string && depth == 0
+#[derive(Clone, Copy)]
+enum QuoteState {
+    Outside,
+    Quoted,
+    Escaped,
 }
 
-fn quoted_byte_state(bytes: &[u8], index: usize, escaped: bool) -> (bool, bool, bool) {
-    match (bytes[index], escaped) {
-        (_, true) => (true, false, false),
-        (b'\\', false) => (true, true, false),
-        (b'\'', false) if bytes.get(index + 1) == Some(&b'\'') => (true, false, true),
-        (b'\'', false) => (false, false, false),
-        (_, false) => (true, false, false),
+fn outer_parentheses_enclose_expression(value: &str) -> bool {
+    let mut bytes = value.bytes().peekable();
+    let mut depth = 0_u32;
+    let mut quoted = QuoteState::Outside;
+    while let Some(byte) = bytes.next() {
+        match (quoted, byte) {
+            (QuoteState::Escaped, _) => quoted = QuoteState::Quoted,
+            (QuoteState::Quoted, b'\\') => quoted = QuoteState::Escaped,
+            (QuoteState::Quoted, b'\'') if bytes.peek() == Some(&b'\'') => {
+                bytes.next();
+            }
+            (QuoteState::Quoted, b'\'') => quoted = QuoteState::Outside,
+            (QuoteState::Quoted, _) => {}
+            (QuoteState::Outside, b'\'') => quoted = QuoteState::Quoted,
+            (QuoteState::Outside, b'(') => {
+                let Some(next_depth) = depth.checked_add(1) else {
+                    return false;
+                };
+                depth = next_depth;
+            }
+            (QuoteState::Outside, b')') => {
+                let Some(next_depth) = depth.checked_sub(1) else {
+                    return false;
+                };
+                depth = next_depth;
+                if depth == 0 && bytes.peek().is_some() {
+                    return false;
+                }
+            }
+            (QuoteState::Outside, _) => {}
+        }
     }
+    matches!(quoted, QuoteState::Outside) && depth == 0
 }
+
 pub(super) fn normalize(value: &str) -> String {
     // MySQL's catalog serializes the quote delimiters of binary literals as
     // `\'`; unescape that decoration before tracking SQL string boundaries.
@@ -191,19 +174,18 @@ fn replace_length_aliases(mut normalized: String, columns: &[&str]) -> String {
     for column in columns {
         let length = format!("length({column})");
         let octet_length = format!("octet_length({column})");
-        let mut offset = 0;
+        let mut remaining = normalized.as_str();
         let mut rewritten = String::with_capacity(normalized.len());
-        while let Some(found) = normalized[offset..].find(&length) {
-            let start = offset + found;
-            rewritten.push_str(&normalized[offset..start]);
-            if normalized.as_bytes()[..start].ends_with(b"octet_") {
-                rewritten.push_str(&normalized[start..start + length.len()]);
+        while let Some((prefix, suffix)) = remaining.split_once(&length) {
+            rewritten.push_str(prefix);
+            rewritten.push_str(if prefix.ends_with("octet_") {
+                &length
             } else {
-                rewritten.push_str(&octet_length);
-            }
-            offset = start + length.len();
+                &octet_length
+            });
+            remaining = suffix;
         }
-        rewritten.push_str(&normalized[offset..]);
+        rewritten.push_str(remaining);
         normalized = rewritten;
     }
     normalized

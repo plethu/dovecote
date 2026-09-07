@@ -1,4 +1,4 @@
-//! Migration-only import into the SQLite Dovecote tables.
+//! Migration-only import into the `SQLite` Dovecote tables.
 //!
 //! The legacy schema is intentionally outside this crate. A migration caller
 //! extracts and validates its source row, then passes a checked event and one
@@ -17,7 +17,7 @@ use sqlx::{FromRow, Sqlite, Transaction, query, query_as, query_scalar};
 /// Imports one event and a portable legacy delivery state in the supplied
 /// transaction. The caller remains responsible for commit or rollback.
 ///
-/// SQLite supplies database-authoritative millisecond operation time (stored
+/// `SQLite` supplies database-authoritative millisecond operation time (stored
 /// in Dovecote's microsecond representation with a zeroed final three
 /// fractional digits) for `enqueued_at` and `available_at`. Claims, claim
 /// tokens, retries, and quarantines are not importable.
@@ -65,11 +65,11 @@ pub(crate) async fn import_for_scope<'c>(
     .bind(event.id().as_str())
     .bind(event.source().as_str())
     .bind(event.event_type().as_str())
-    .bind(event.subject().map(|value| value.as_str()))
+    .bind(event.subject().map(dovecote::EventSubject::as_str))
     .bind(event.time().map(crate::enqueue::format_timestamp))
-    .bind(event.datacontenttype().map(|value| value.as_str()))
-    .bind(event.dataschema().map(|value| value.as_str()))
-    .bind(event.partitionkey().map(|value| value.as_str()))
+    .bind(event.datacontenttype().map(dovecote::ContentType::as_str))
+    .bind(event.dataschema().map(dovecote::SchemaUri::as_str))
+    .bind(event.partitionkey().map(dovecote::PartitionKey::as_str))
     .bind(event.extensions().canonical_json())
     .bind(data_kind)
     .bind(data)

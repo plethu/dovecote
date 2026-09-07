@@ -1,5 +1,9 @@
 # Backend support matrix
 
+The following release evidence is historical. Candidate 0.2.2 must satisfy the
+[release procedure](releases.md) on its own final revision before publication;
+local alignment checks do not replace the required CI matrix.
+
 Evidence snapshot: 2026-08-28. All four Dovecote 0.2.0 crates are published and
 registry-verified. The
 [canonical CI run](https://github.com/plethu/dovecote/actions/runs/33216232011)

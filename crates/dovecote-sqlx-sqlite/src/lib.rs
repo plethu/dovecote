@@ -1,6 +1,6 @@
-//! SQLite schema and SQLx boundary for Dovecote.
+//! `SQLite` schema and `SQLx` boundary for Dovecote.
 //!
-//! SQLite's single-writer model is a distinct support contract. Write and
+//! `SQLite`'s single-writer model is a distinct support contract. Write and
 //! claim transactions therefore use explicit `BEGIN IMMEDIATE`; busy errors
 //! are retried only by the bounded policy configured on [`SqliteDovecote`].
 #![warn(missing_docs)]
@@ -40,18 +40,26 @@ pub const DEFAULT_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Begins a caller write transaction using the default busy policy. The
 /// returned transaction is safe to pass to [`TenantDovecote::enqueue`].
+///
+/// # Errors
+/// Returns an error for invalid busy configuration or if the `SQLite` writer
+/// reservation cannot be acquired within the configured busy budget.
 pub async fn begin_write(pool: &SqlitePool) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
     begin_write_with_config(pool, BusyConfig::default()).await
 }
 
 /// Alias for [`begin_write`] for callers about to enqueue an event.
+///
+/// # Errors
+/// Returns an error for invalid busy configuration or if the `SQLite` writer
+/// reservation cannot be acquired within the configured busy budget.
 pub async fn begin_enqueue(
     pool: &SqlitePool,
 ) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
     begin_write(pool).await
 }
 
-/// Bounded busy handling for SQLite's single-writer lock.
+/// Bounded busy handling for `SQLite`'s single-writer lock.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct BusyConfig {
     timeout: Duration,
@@ -62,21 +70,25 @@ impl BusyConfig {
     /// Creates a policy with a finite per-lock wait and at most `retries`
     /// immediate whole-operation retries. The total lock-wait budget is at
     /// most `(retries + 1) * timeout` per operation.
+    #[must_use]
     pub const fn new(timeout: Duration, retries: u32) -> Self {
         Self { timeout, retries }
     }
 
     /// Creates a policy using the default per-lock timeout.
+    #[must_use]
     pub const fn with_retries(retries: u32) -> Self {
         Self::new(DEFAULT_BUSY_TIMEOUT, retries)
     }
 
-    /// Maximum wait for one SQLite writer-lock acquisition.
+    /// Maximum wait for one `SQLite` writer-lock acquisition.
+    #[must_use]
     pub const fn timeout(self) -> Duration {
         self.timeout
     }
 
     /// Number of complete operation retries after the first lock wait.
+    #[must_use]
     pub const fn retries(self) -> u32 {
         self.retries
     }
@@ -88,7 +100,7 @@ impl Default for BusyConfig {
     }
 }
 
-/// SQLite adapter for Dovecote's durable event and delivery schema.
+/// `SQLite` adapter for Dovecote's durable event and delivery schema.
 #[derive(Clone)]
 pub struct SqliteDovecote {
     pool: SqlitePool,
@@ -97,6 +109,7 @@ pub struct SqliteDovecote {
 
 impl SqliteDovecote {
     /// Creates an adapter with the documented bounded busy policy.
+    #[must_use]
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             pool,
@@ -105,43 +118,60 @@ impl SqliteDovecote {
     }
 
     /// Creates an adapter with an explicit busy retry policy.
+    #[must_use]
     pub const fn with_busy_config(pool: SqlitePool, busy: BusyConfig) -> Self {
         Self { pool, busy }
     }
 
     /// Borrows the pool used by this adapter.
-    pub fn pool(&self) -> &SqlitePool {
+    #[must_use]
+    pub const fn pool(&self) -> &SqlitePool {
         &self.pool
     }
 
     /// Returns the bounded busy policy used by adapter operations.
+    #[must_use]
     pub const fn busy_config(&self) -> BusyConfig {
         self.busy
     }
 
     /// Begins the caller transaction used for enqueue and application state.
-    /// It acquires SQLite's single writer slot before any adapter reads.
+    /// It acquires `SQLite`'s single writer slot before any adapter reads.
+    ///
+    /// # Errors
+    /// Returns an error for invalid busy configuration or if the `SQLite` writer
+    /// reservation cannot be acquired within the configured busy budget.
     pub async fn begin_write(&self) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
         begin_write_with_config(&self.pool, self.busy).await
     }
 
     /// Alias emphasizing that the returned transaction is suitable for
     /// [`TenantDovecote::enqueue`].
+    ///
+    /// # Errors
+    /// Returns an error for invalid busy configuration or if the `SQLite` writer
+    /// reservation cannot be acquired within the configured busy budget.
     pub async fn begin_enqueue(&self) -> Result<Transaction<'static, Sqlite>, EnqueueError> {
         self.begin_write().await
     }
 
     /// Creates an ordinary handle restricted to one validated tenant.
+    #[must_use]
     pub fn for_tenant(&self, tenant_id: dovecote::TenantId) -> TenantDovecote {
         TenantDovecote::new(self.pool.clone(), tenant_id, self.busy)
     }
 
     /// Creates the explicit administrative handle for all-tenant reads and named writes.
+    #[must_use]
     pub fn admin(&self) -> AdminDovecote {
         AdminDovecote::new(self.pool.clone(), self.busy)
     }
 
-    /// Verifies that the pool's current SQLite schema satisfies Dovecote.
+    /// Verifies that the pool's current `SQLite` schema satisfies Dovecote.
+    ///
+    /// # Errors
+    /// Returns an error for an unsupported backend, missing or incompatible
+    /// migration markers, tables, constraints or indexes, or failed catalog reads.
     pub async fn check_schema(&self) -> Result<(), SchemaError> {
         check_schema(&self.pool).await
     }
@@ -214,7 +244,7 @@ pub(crate) async fn begin_read(
 }
 
 /// Completes a transaction while retaining the transaction value on commit
-/// failure long enough to await its rollback. SQLx's consuming
+/// failure long enough to await its rollback. `SQLx`'s consuming
 /// `Transaction::commit` can only schedule a best-effort rollback when the
 /// commit fails; this path closes the owned transaction synchronously from the
 /// adapter's async operation instead.
@@ -271,12 +301,16 @@ pub(crate) async fn install_busy_timeout(
     Ok(())
 }
 
-/// SQLite exposes transaction state through its C API, not SQL. This is a
+/// `SQLite` exposes transaction state through its C API, not SQL. This is a
 /// read-only inspection and does not alter the caller transaction.
 pub(crate) async fn transaction_is_write(
     transaction: &mut Transaction<'_, Sqlite>,
 ) -> Result<bool, sqlx::Error> {
     let mut handle = transaction.lock_handle().await?;
+    // SAFETY: SQLx's locked handle keeps the live connection exclusively borrowed
+    // until this call returns, preventing concurrent worker access. The pointer
+    // comes from that guard, and SQLite accepts a null schema name to inspect
+    // the transaction state across attached databases. This read changes no state.
     let state = unsafe {
         libsqlite3_sys::sqlite3_txn_state(handle.as_raw_handle().as_ptr(), std::ptr::null())
     };

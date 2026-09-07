@@ -1,4 +1,4 @@
-//! Claim-token-fenced SQLite delivery mutations.
+//! Claim-token-fenced `SQLite` delivery mutations.
 
 use crate::{
     BusyConfig, begin_immediate, checked_milliseconds, commit_transaction,

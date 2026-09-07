@@ -1,9 +1,9 @@
-//! Helpers shared by the SQLite integration-test concerns.
+//! Helpers shared by the `SQLite` integration-test concerns.
 
 pub(crate) use super::support::database;
 pub(crate) use dovecote::{
     ClaimToken, ContentType, Delay, EnqueueOutcome, EventData, EventId, EventSource, EventSubject,
-    EventType, ExtensionName, ExtensionValue, Extensions, Failure, FinalizeOutcome, ImportOutcome,
+    EventType, ExtensionName, ExtensionValue, Extensions, Failure, ImportOutcome,
     ImportedDeliveryState, Lease, Limit, NewEvent, PartitionKey, QuarantineReason, RowId,
     SchemaUri, StreamName, TenantId, WorkerId,
 };
@@ -20,25 +20,13 @@ pub(crate) use tokio::sync::Barrier;
 
 /// Test-only bridge for legacy fixture call sites; production callers use
 /// `SqliteDovecote::for_tenant` directly.
-#[allow(dead_code)]
 pub(crate) trait TestTenantOps {
     async fn enqueue<'c>(
         &self,
         tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
         event: NewEvent,
     ) -> Result<EnqueueOutcome, dovecote_sqlx_sqlite::EnqueueError>;
-    async fn import_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, dovecote_sqlx_sqlite::ImportError>;
-    async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        row_id: RowId,
-        at: time::OffsetDateTime,
-    ) -> Result<FinalizeOutcome, dovecote_sqlx_sqlite::FinalizeError>;
+
     async fn page(
         &self,
         after: Option<RowId>,
@@ -91,26 +79,7 @@ impl TestTenantOps for SqliteDovecote {
             .enqueue(tx, event)
             .await
     }
-    async fn import_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, dovecote_sqlx_sqlite::ImportError> {
-        self.for_tenant(TenantId::new("test").unwrap())
-            .import_for_migration(tx, event, state)
-            .await
-    }
-    async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        row_id: RowId,
-        at: time::OffsetDateTime,
-    ) -> Result<FinalizeOutcome, dovecote_sqlx_sqlite::FinalizeError> {
-        self.for_tenant(TenantId::new("test").unwrap())
-            .finalize_pending_delivery_for_migration(tx, row_id, at)
-            .await
-    }
+
     async fn page(
         &self,
         after: Option<RowId>,

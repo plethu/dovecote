@@ -2,9 +2,10 @@
 
 use crate::{
     error::EnqueueError,
+    hydrate::{EventRow, hydrate_event},
     migration::{SchemaMarker, current_migration, marker_matches_migration},
 };
-use dovecote::{EnqueueOutcome, EventData, EventSizeLimit, NewEvent, RowId, TenantId};
+use dovecote::{EnqueueOutcome, NewEvent, RowId, TenantId};
 use sqlx::{FromRow, Postgres, Transaction, query, query_as, query_scalar};
 use time::OffsetDateTime;
 
@@ -29,7 +30,7 @@ pub(crate) async fn enqueue_for_scope<'c>(
     });
 
     let inserted = query_as::<_, InsertedEvent>(
-        r#"
+        r"
         INSERT INTO dovecote_events
             (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
@@ -37,7 +38,7 @@ pub(crate) async fn enqueue_for_scope<'c>(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         ON CONFLICT (tenant_id, source, event_id) DO NOTHING
         RETURNING row_id, enqueued_at
-        "#,
+        ",
     )
     .bind(tenant_id.as_str())
     .bind(event.stream().as_str())
@@ -45,11 +46,11 @@ pub(crate) async fn enqueue_for_scope<'c>(
     .bind(event.id().as_str())
     .bind(event.source().as_str())
     .bind(event.event_type().as_str())
-    .bind(event.subject().map(|value| value.as_str()))
+    .bind(event.subject().map(dovecote::EventSubject::as_str))
     .bind(event.time())
-    .bind(event.datacontenttype().map(|value| value.as_str()))
-    .bind(event.dataschema().map(|value| value.as_str()))
-    .bind(event.partitionkey().map(|value| value.as_str()))
+    .bind(event.datacontenttype().map(dovecote::ContentType::as_str))
+    .bind(event.dataschema().map(dovecote::SchemaUri::as_str))
+    .bind(event.partitionkey().map(dovecote::PartitionKey::as_str))
     .bind(extensions)
     .bind(data_kind)
     .bind(data)
@@ -128,7 +129,7 @@ pub(crate) async fn validate_enqueue_schema<'c>(
     transaction: &mut Transaction<'c, Postgres>,
 ) -> Result<(), EnqueueError> {
     let selection = query_as::<_, EnqueueSchemaSelection>(
-        r#"
+        r"
         SELECT namespace.nspname AS schema_name,
                EXISTS (
                    SELECT 1 FROM pg_class table_class
@@ -150,7 +151,7 @@ pub(crate) async fn validate_enqueue_schema<'c>(
                ) AS deliveries_table
         FROM pg_namespace namespace
         WHERE namespace.nspname = current_schema()
-        "#,
+        ",
     )
     .fetch_optional(&mut **transaction)
     .await
@@ -168,13 +169,13 @@ pub(crate) async fn validate_enqueue_schema<'c>(
     }
 
     let marker = query_as::<_, SchemaMarker>(
-        r#"
+        r"
         SELECT schema_version, minimum_crate_major, minimum_crate_minor,
                minimum_crate_patch, rolling_compatible
         FROM dovecote_schema
         ORDER BY schema_version DESC
         LIMIT 1
-        "#,
+        ",
     )
     .fetch_optional(&mut **transaction)
     .await
@@ -222,87 +223,38 @@ pub(crate) fn same_event(event: &NewEvent, existing: &ExistingEvent) -> bool {
         && event.id().as_str() == existing.event_id
         && event.source().as_str() == existing.source
         && event.event_type().as_str() == existing.event_type
-        && event.subject().map(|value| value.as_str()) == existing.subject.as_deref()
+        && event.subject().map(dovecote::EventSubject::as_str) == existing.subject.as_deref()
         && event.time() == existing.occurred_at
-        && event.datacontenttype().map(|value| value.as_str())
+        && event.datacontenttype().map(dovecote::ContentType::as_str)
             == existing.datacontenttype.as_deref()
-        && event.dataschema().map(|value| value.as_str()) == existing.dataschema.as_deref()
-        && event.partitionkey().map(|value| value.as_str()) == existing.partitionkey.as_deref()
+        && event.dataschema().map(dovecote::SchemaUri::as_str) == existing.dataschema.as_deref()
+        && event.partitionkey().map(dovecote::PartitionKey::as_str)
+            == existing.partitionkey.as_deref()
         && event.extensions().canonical_json() == existing.extensions
         && event
             .data()
             .map(|data| if data.is_json() { "json" } else { "binary" })
             == existing.data_kind.as_deref()
-        && event.data().map(|data| data.as_bytes()) == existing.data.as_deref()
+        && event.data().map(dovecote::EventData::as_bytes) == existing.data.as_deref()
 }
 
 pub(crate) fn validate_existing_event(existing: &ExistingEvent) -> Result<(), String> {
-    if existing.specversion != dovecote::SPEC_VERSION {
-        return Err("stored event has an unsupported specversion".to_owned());
-    }
-
-    let stream =
-        dovecote::StreamName::new(existing.stream.clone()).map_err(|error| error.to_string())?;
-    let id =
-        dovecote::EventId::new(existing.event_id.clone()).map_err(|error| error.to_string())?;
-    let source =
-        dovecote::EventSource::new(existing.source.clone()).map_err(|error| error.to_string())?;
-    let event_type =
-        dovecote::EventType::new(existing.event_type.clone()).map_err(|error| error.to_string())?;
-    let mut builder = NewEvent::builder(stream, id, source, event_type);
-    builder = match &existing.subject {
-        Some(value) => builder.subject(
-            dovecote::EventSubject::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-
-    builder = match existing.occurred_at {
-        Some(value) => builder.time(value),
-        None => builder,
-    };
-
-    builder = match &existing.datacontenttype {
-        Some(value) => builder.datacontenttype(
-            dovecote::ContentType::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-
-    builder = match &existing.dataschema {
-        Some(value) => builder.dataschema(
-            dovecote::SchemaUri::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-
-    builder = match &existing.partitionkey {
-        Some(value) => builder.partitionkey(
-            dovecote::PartitionKey::new(value.clone()).map_err(|error| error.to_string())?,
-        ),
-        None => builder,
-    };
-
-    builder = builder.extensions(
-        dovecote::Extensions::from_canonical_json(&existing.extensions)
-            .map_err(|error| error.to_string())?,
-    );
-    match (&existing.data_kind, &existing.data) {
-        (None, None) => {}
-        (Some(kind), Some(bytes)) if kind == "json" => {
-            builder =
-                builder.data(EventData::json(bytes.clone()).map_err(|error| error.to_string())?);
-        }
-        (Some(kind), Some(bytes)) if kind == "binary" => {
-            builder = builder.data(EventData::binary(bytes.clone()));
-        }
-        _ => return Err("stored data kind and data columns do not agree".to_owned()),
-    }
-
-    builder
-        .build_with_limit(EventSizeLimit::new(usize::MAX).expect("maximum size is non-zero"))
-        .map_err(|error| error.to_string())?;
-    Ok(())
+    hydrate_event(&EventRow {
+        stream: &existing.stream,
+        specversion: &existing.specversion,
+        event_id: &existing.event_id,
+        source: &existing.source,
+        event_type: &existing.event_type,
+        subject: existing.subject.as_deref(),
+        occurred_at: existing.occurred_at,
+        datacontenttype: existing.datacontenttype.as_deref(),
+        dataschema: existing.dataschema.as_deref(),
+        partitionkey: existing.partitionkey.as_deref(),
+        extensions: &existing.extensions,
+        data_kind: existing.data_kind.as_deref(),
+        data: existing.data.as_deref(),
+    })
+    .map(|_| ())
 }
 
 fn row_id(value: i64) -> Result<RowId, String> {

@@ -36,6 +36,7 @@ pub enum ValidationKind {
 
 impl ValidationKind {
     /// Returns the code a presentation layer can map to its own catalogue.
+    #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
             Self::Empty => "empty",
@@ -97,6 +98,7 @@ pub enum ValidationOperation {
 
 impl ValidationOperation {
     /// Returns the stable category code for presentation or telemetry.
+    #[must_use]
     pub const fn code(self) -> &'static str {
         match self {
             Self::Event => "invalid_event",
@@ -143,31 +145,37 @@ impl ValidationError {
     }
 
     /// Names the value that failed validation.
+    #[must_use]
     pub const fn field(&self) -> &'static str {
         self.field
     }
 
     /// Returns the low-level reason for programmatic handling.
+    #[must_use]
     pub const fn kind(&self) -> ValidationKind {
         self.kind
     }
 
     /// Returns the operation category without requiring string inspection.
+    #[must_use]
     pub const fn operation(&self) -> ValidationOperation {
         self.operation
     }
 
     /// Returns the low-level reason code.
+    #[must_use]
     pub const fn code(&self) -> &'static str {
         self.kind.code()
     }
 
     /// Returns the operation-level code for logs, metrics, or a presentation layer.
+    #[must_use]
     pub const fn category_code(&self) -> &'static str {
         self.operation.code()
     }
 
     /// Returns a locale-neutral diagnostic for command-line and local logs.
+    #[must_use]
     pub fn to_english(&self) -> String {
         self.to_string()
     }

@@ -1,4 +1,4 @@
-//! Versioned MySQL/MariaDB migration metadata.
+//! Versioned `MySQL`/`MariaDB` migration metadata.
 
 /// Schema version adapters compare before using these migration artifacts.
 pub const SCHEMA_VERSION: u32 = 2;
@@ -14,6 +14,7 @@ pub struct CrateVersion {
 
 impl CrateVersion {
     /// Creates a crate version.
+    #[must_use]
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -23,16 +24,19 @@ impl CrateVersion {
     }
 
     /// Returns the major component.
+    #[must_use]
     pub const fn major(self) -> u16 {
         self.major
     }
 
     /// Returns the minor component.
+    #[must_use]
     pub const fn minor(self) -> u16 {
         self.minor
     }
 
     /// Returns the patch component.
+    #[must_use]
     pub const fn patch(self) -> u16 {
         self.patch
     }
@@ -72,6 +76,9 @@ impl MigrationCompatibility {
     }
 
     /// Creates a checked compatibility range.
+    ///
+    /// # Errors
+    /// Returns an error when the maximum compatible version precedes the minimum.
     pub const fn try_new(
         minimum: CrateVersion,
         maximum: Option<CrateVersion>,
@@ -85,16 +92,19 @@ impl MigrationCompatibility {
     }
 
     /// Returns the minimum compatible crate version.
+    #[must_use]
     pub const fn minimum(self) -> CrateVersion {
         self.minimum
     }
 
     /// Returns the optional maximum compatible crate version.
+    #[must_use]
     pub const fn maximum(self) -> Option<CrateVersion> {
         self.maximum
     }
 
     /// Reports whether a crate version is in this range.
+    #[must_use]
     pub const fn contains(self, version: CrateVersion) -> bool {
         !version.is_less_than(self.minimum)
             && match self.maximum {
@@ -130,21 +140,25 @@ impl Migration {
     }
 
     /// Returns this migration's durable schema version.
+    #[must_use]
     pub const fn version(self) -> u32 {
         self.version
     }
 
     /// Returns the immutable SQL artifact.
+    #[must_use]
     pub const fn sql(self) -> &'static str {
         self.sql
     }
 
     /// Returns the crate compatibility range.
+    #[must_use]
     pub const fn compatibility(self) -> MigrationCompatibility {
         self.compatibility
     }
 
     /// Reports whether this migration is safe during rolling deployment.
+    #[must_use]
     pub const fn rolling_compatible(self) -> bool {
         self.rolling_compatible
     }

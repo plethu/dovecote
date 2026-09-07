@@ -28,7 +28,7 @@ pub(crate) struct ConstraintContract {
 }
 
 impl ConstraintContract {
-    pub(crate) fn check(
+    pub(crate) const fn check(
         name: &'static str,
         table_name: &'static str,
         definition_variants: &'static [&'static str],
@@ -45,7 +45,7 @@ impl ConstraintContract {
         }
     }
 
-    pub(crate) fn primary_key(
+    pub(crate) const fn primary_key(
         name: &'static str,
         table_name: &'static str,
         columns: &'static [&'static str],
@@ -63,7 +63,7 @@ impl ConstraintContract {
         }
     }
 
-    pub(crate) fn unique(
+    pub(crate) const fn unique(
         name: &'static str,
         table_name: &'static str,
         columns: &'static [&'static str],
@@ -81,7 +81,7 @@ impl ConstraintContract {
         }
     }
 
-    pub(crate) fn foreign_key(
+    pub(crate) const fn foreign_key(
         name: &'static str,
         table_name: &'static str,
         columns: &'static [&'static str],
@@ -159,7 +159,7 @@ pub(crate) struct IndexContract {
 }
 
 impl IndexContract {
-    pub(crate) fn new(
+    pub(crate) const fn new(
         name: &'static str,
         table_name: &'static str,
         is_unique: bool,

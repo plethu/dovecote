@@ -1,4 +1,4 @@
-//! Versioned PostgreSQL migration metadata.
+//! Versioned `PostgreSQL` migration metadata.
 
 use sqlx::FromRow;
 
@@ -16,6 +16,7 @@ pub struct CrateVersion {
 
 impl CrateVersion {
     /// Creates a comparable semantic version from numeric components.
+    #[must_use]
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -25,16 +26,19 @@ impl CrateVersion {
     }
 
     /// Returns the major component.
+    #[must_use]
     pub const fn major(self) -> u16 {
         self.major
     }
 
     /// Returns the minor component.
+    #[must_use]
     pub const fn minor(self) -> u16 {
         self.minor
     }
 
     /// Returns the patch component.
+    #[must_use]
     pub const fn patch(self) -> u16 {
         self.patch
     }
@@ -97,6 +101,9 @@ impl MigrationCompatibility {
     }
 
     /// Constructs a compatibility range, rejecting a maximum below its minimum.
+    ///
+    /// # Errors
+    /// Returns an error when the maximum compatible version precedes the minimum.
     pub const fn try_new(
         minimum: CrateVersion,
         maximum: Option<CrateVersion>,
@@ -110,16 +117,19 @@ impl MigrationCompatibility {
     }
 
     /// Returns the minimum supported crate version.
+    #[must_use]
     pub const fn minimum(self) -> CrateVersion {
         self.minimum
     }
 
     /// Returns the optional maximum supported crate version.
+    #[must_use]
     pub const fn maximum(self) -> Option<CrateVersion> {
         self.maximum
     }
 
     /// Returns whether `version` falls within this inclusive range.
+    #[must_use]
     pub const fn contains(self, version: CrateVersion) -> bool {
         !version.is_less_than(self.minimum)
             && match self.maximum {
@@ -155,21 +165,25 @@ impl Migration {
     }
 
     /// Returns the schema version represented by this migration.
+    #[must_use]
     pub const fn version(self) -> u32 {
         self.version
     }
 
     /// Returns the immutable SQL text shipped for this migration.
+    #[must_use]
     pub const fn sql(self) -> &'static str {
         self.sql
     }
 
     /// Returns the crate-version compatibility range for this migration.
+    #[must_use]
     pub const fn compatibility(self) -> MigrationCompatibility {
         self.compatibility
     }
 
     /// Returns whether this migration supports rolling deployment compatibility.
+    #[must_use]
     pub const fn rolling_compatible(self) -> bool {
         self.rolling_compatible
     }

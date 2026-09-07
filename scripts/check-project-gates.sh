@@ -6,7 +6,8 @@ if [[ "${DOVECOTE_GATES_MISE_REEXEC:-0}" != "1" ]] && {
   ! command -v taplo >/dev/null 2>&1 ||
   ! command -v typos >/dev/null 2>&1 ||
   ! command -v just >/dev/null 2>&1 ||
-  ! command -v cargo-deny >/dev/null 2>&1
+  ! command -v cargo-deny >/dev/null 2>&1 ||
+  ! command -v cargo-machete >/dev/null 2>&1
 }; then
   if command -v mise >/dev/null 2>&1; then
     export DOVECOTE_GATES_MISE_REEXEC=1
@@ -38,7 +39,7 @@ fi
 echo "== cargo clippy =="
 (
   cd "$repo_root"
-  cargo clippy --workspace --all-targets --all-features -- -D warnings
+  scripts/check-rust.sh
 )
 
 echo "== cargo doc (strict) =="
@@ -58,6 +59,17 @@ echo "== cargo deny supply-chain checks =="
   else
     echo "cargo-deny is unavailable; run 'mise install'" >&2
     exit 2
+  fi
+)
+
+echo "== unused dependencies =="
+(
+  cd "$repo_root"
+  cargo machete --with-metadata crates
+  if [[ -f tests/sibling-worktrees/carrier/crates/dovecote/Cargo.toml ]]; then
+    scripts/check-migration-runner.sh
+  else
+    echo "Migration runner checks skipped: prepare the documented sibling fixture checkouts."
   fi
 )
 

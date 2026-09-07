@@ -1,4 +1,4 @@
-//! Claim-token-fenced PostgreSQL delivery mutations.
+//! Claim-token-fenced `PostgreSQL` delivery mutations.
 
 use crate::{error::MutationError, rls};
 use dovecote::{
@@ -106,7 +106,7 @@ async fn execute_mutation(
     let result = match mutation {
         Mutation::Renew { lease_for } => {
             query(
-                r#"
+                r"
                 WITH locked AS MATERIALIZED (
                     SELECT event_row_id
                     FROM dovecote_deliveries
@@ -124,7 +124,7 @@ async fn execute_mutation(
                   AND delivery.state = 'claimed'
                   AND delivery.claim_token = $3
                   AND delivery.claim_expires_at > operation.operation_time
-                "#,
+                ",
             )
             .bind(tenant_id.map(TenantId::as_str))
             .bind(row_id.get())
@@ -135,7 +135,7 @@ async fn execute_mutation(
         }
         Mutation::Ack => {
             query(
-                r#"
+                r"
                 WITH locked AS MATERIALIZED (
                     SELECT event_row_id
                     FROM dovecote_deliveries
@@ -157,7 +157,7 @@ async fn execute_mutation(
                   AND delivery.state = 'claimed'
                   AND delivery.claim_token = $3
                   AND delivery.claim_expires_at > operation.operation_time
-                "#,
+                ",
             )
             .bind(tenant_id.map(TenantId::as_str))
             .bind(row_id.get())
@@ -167,7 +167,7 @@ async fn execute_mutation(
         }
         Mutation::Retry { failure, backoff } => {
             query(
-                r#"
+                r"
                 WITH locked AS MATERIALIZED (
                     SELECT event_row_id
                     FROM dovecote_deliveries
@@ -191,7 +191,7 @@ async fn execute_mutation(
                   AND delivery.state = 'claimed'
                   AND delivery.claim_token = $3
                   AND delivery.claim_expires_at > operation.operation_time
-                "#,
+                ",
             )
             .bind(tenant_id.map(TenantId::as_str))
             .bind(row_id.get())
@@ -204,7 +204,7 @@ async fn execute_mutation(
         }
         Mutation::Release { delay } => {
             query(
-                r#"
+                r"
                 WITH locked AS MATERIALIZED (
                     SELECT event_row_id
                     FROM dovecote_deliveries
@@ -226,7 +226,7 @@ async fn execute_mutation(
                   AND delivery.state = 'claimed'
                   AND delivery.claim_token = $3
                   AND delivery.claim_expires_at > operation.operation_time
-                "#,
+                ",
             )
             .bind(tenant_id.map(TenantId::as_str))
             .bind(row_id.get())
@@ -237,7 +237,7 @@ async fn execute_mutation(
         }
         Mutation::Quarantine { reason } => {
             query(
-                r#"
+                r"
                 WITH locked AS MATERIALIZED (
                     SELECT event_row_id
                     FROM dovecote_deliveries
@@ -260,7 +260,7 @@ async fn execute_mutation(
                   AND delivery.state = 'claimed'
                   AND delivery.claim_token = $3
                   AND delivery.claim_expires_at > operation.operation_time
-                "#,
+                ",
             )
             .bind(tenant_id.map(TenantId::as_str))
             .bind(row_id.get())
@@ -289,7 +289,7 @@ async fn lock_delivery(
     row_id: RowId,
 ) -> Result<DeliveryForMutation, MutationError> {
     query_as::<_, DeliveryForMutation>(
-        r#"
+        r"
         WITH locked AS MATERIALIZED (
             SELECT state, claim_token, claim_expires_at
             FROM dovecote_deliveries
@@ -301,7 +301,7 @@ async fn lock_delivery(
         )
         SELECT state, claim_token, claim_expires_at, operation_time
         FROM operation
-        "#,
+        ",
     )
     .bind(tenant_id.map(TenantId::as_str))
     .bind(row_id.get())

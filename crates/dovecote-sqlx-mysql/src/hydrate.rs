@@ -1,4 +1,4 @@
-//! Conversion of validated MySQL rows into Dovecote events.
+//! Conversion of validated `MySQL` rows into Dovecote events.
 
 use dovecote::{EventData, EventSizeLimit, NewEvent, StoredEvent};
 

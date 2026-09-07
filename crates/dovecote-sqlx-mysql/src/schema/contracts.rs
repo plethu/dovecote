@@ -105,7 +105,7 @@ impl ColumnSpec {
     }
 }
 
-pub(super) fn marker_columns() -> [ColumnSpec; 5] {
+pub(super) const fn marker_columns() -> [ColumnSpec; 5] {
     [
         ColumnSpec::required("schema_version", "int", None, false),
         ColumnSpec::required("minimum_crate_major", "smallint", None, false),

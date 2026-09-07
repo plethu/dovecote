@@ -1,43 +1,43 @@
-//! Validation and reconstruction of events read from PostgreSQL.
+//! Validation and reconstruction of events read from `PostgreSQL`.
 
 use dovecote::{EventData, EventSizeLimit, NewEvent, StoredEvent};
 use time::OffsetDateTime;
 
 /// Event columns shared by claim and page queries.
 #[derive(Debug)]
-pub(crate) struct EventRow {
-    pub(crate) stream: String,
-    pub(crate) specversion: String,
-    pub(crate) event_id: String,
-    pub(crate) source: String,
-    pub(crate) event_type: String,
-    pub(crate) subject: Option<String>,
+pub(crate) struct EventRow<'a> {
+    pub(crate) stream: &'a str,
+    pub(crate) specversion: &'a str,
+    pub(crate) event_id: &'a str,
+    pub(crate) source: &'a str,
+    pub(crate) event_type: &'a str,
+    pub(crate) subject: Option<&'a str>,
     pub(crate) occurred_at: Option<OffsetDateTime>,
-    pub(crate) datacontenttype: Option<String>,
-    pub(crate) dataschema: Option<String>,
-    pub(crate) partitionkey: Option<String>,
-    pub(crate) extensions: String,
-    pub(crate) data_kind: Option<String>,
-    pub(crate) data: Option<Vec<u8>>,
+    pub(crate) datacontenttype: Option<&'a str>,
+    pub(crate) dataschema: Option<&'a str>,
+    pub(crate) partitionkey: Option<&'a str>,
+    pub(crate) extensions: &'a str,
+    pub(crate) data_kind: Option<&'a str>,
+    pub(crate) data: Option<&'a [u8]>,
 }
 
 /// Reconstructs and validates one stored event from its database columns.
-pub(crate) fn hydrate_event(row: &EventRow) -> Result<StoredEvent, String> {
+pub(crate) fn hydrate_event(row: &EventRow<'_>) -> Result<StoredEvent, String> {
     if row.specversion != dovecote::SPEC_VERSION {
         return Err("stored event has an unsupported specversion".to_owned());
     }
 
     let stream =
-        dovecote::StreamName::new(row.stream.clone()).map_err(|error| error.to_string())?;
-    let id = dovecote::EventId::new(row.event_id.clone()).map_err(|error| error.to_string())?;
+        dovecote::StreamName::new(row.stream.to_owned()).map_err(|error| error.to_string())?;
+    let id = dovecote::EventId::new(row.event_id.to_owned()).map_err(|error| error.to_string())?;
     let source =
-        dovecote::EventSource::new(row.source.clone()).map_err(|error| error.to_string())?;
+        dovecote::EventSource::new(row.source.to_owned()).map_err(|error| error.to_string())?;
     let event_type =
-        dovecote::EventType::new(row.event_type.clone()).map_err(|error| error.to_string())?;
+        dovecote::EventType::new(row.event_type.to_owned()).map_err(|error| error.to_string())?;
     let mut builder = NewEvent::builder(stream, id, source, event_type);
-    builder = match &row.subject {
+    builder = match row.subject {
         Some(value) => builder.subject(
-            dovecote::EventSubject::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::EventSubject::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
@@ -45,37 +45,37 @@ pub(crate) fn hydrate_event(row: &EventRow) -> Result<StoredEvent, String> {
         Some(value) => builder.time(value),
         None => builder,
     };
-    builder = match &row.datacontenttype {
+    builder = match row.datacontenttype {
         Some(value) => builder.datacontenttype(
-            dovecote::ContentType::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::ContentType::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
-    builder = match &row.dataschema {
+    builder = match row.dataschema {
         Some(value) => builder.dataschema(
-            dovecote::SchemaUri::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::SchemaUri::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
-    builder = match &row.partitionkey {
+    builder = match row.partitionkey {
         Some(value) => builder.partitionkey(
-            dovecote::PartitionKey::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::PartitionKey::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
 
     builder = builder.extensions(
-        dovecote::Extensions::from_canonical_json(&row.extensions)
+        dovecote::Extensions::from_canonical_json(row.extensions)
             .map_err(|error| error.to_string())?,
     );
-    match (&row.data_kind, &row.data) {
+    match (row.data_kind, row.data) {
         (None, None) => {}
-        (Some(kind), Some(bytes)) if kind == "json" => {
+        (Some("json"), Some(bytes)) => {
             builder =
-                builder.data(EventData::json(bytes.clone()).map_err(|error| error.to_string())?);
+                builder.data(EventData::json(bytes.to_owned()).map_err(|error| error.to_string())?);
         }
-        (Some(kind), Some(bytes)) if kind == "binary" => {
-            builder = builder.data(EventData::binary(bytes.clone()));
+        (Some("binary"), Some(bytes)) => {
+            builder = builder.data(EventData::binary(bytes.to_owned()));
         }
         _ => return Err("stored data kind and data columns do not agree".to_owned()),
     }

@@ -18,7 +18,7 @@ use time::{OffsetDateTime, PrimitiveDateTime};
 /// delivery row are locked before the state is inspected. An exact rerun with
 /// the same delivered timestamp returns [`FinalizeOutcome::AlreadyFinalized`];
 /// every other non-canonical, claimed, failed, quarantined, or timestamp-
-/// differing state returns a typed conflict. MySQL and MariaDB store these
+/// differing state returns a typed conflict. `MySQL` and `MariaDB` store these
 /// instants as UTC `DATETIME(6)` values; Dovecote validation rejects values
 /// outside the portable range or below microsecond precision.
 pub(crate) async fn finalize_for_scope<'c>(

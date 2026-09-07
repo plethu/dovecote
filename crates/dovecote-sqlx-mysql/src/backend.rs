@@ -1,4 +1,4 @@
-//! MySQL/MariaDB server identification and capability policy.
+//! `MySQL`/`MariaDB` server identification and capability policy.
 
 use crate::error::SchemaError;
 use sqlx::{FromRow, MySqlConnection, MySqlPool, query_as};
@@ -8,13 +8,13 @@ use sqlx::{FromRow, MySqlConnection, MySqlPool, query_as};
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum BackendKind {
-    /// Oracle MySQL.
+    /// Oracle `MySQL`.
     MySql,
-    /// MariaDB.
+    /// `MariaDB`.
     MariaDb,
 }
 
-/// Numeric server release. Calendar-versioned MySQL Innovation releases such
+/// Numeric server release. Calendar-versioned `MySQL` Innovation releases such
 /// as 26.7 are represented without assuming a sequential major number.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct ServerVersion {
@@ -25,6 +25,7 @@ pub struct ServerVersion {
 
 impl ServerVersion {
     /// Creates a server version from its numeric components.
+    #[must_use]
     pub const fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
             major,
@@ -33,14 +34,17 @@ impl ServerVersion {
         }
     }
     /// Returns the major component.
+    #[must_use]
     pub const fn major(self) -> u32 {
         self.major
     }
     /// Returns the minor component.
+    #[must_use]
     pub const fn minor(self) -> u32 {
         self.minor
     }
     /// Returns the patch component.
+    #[must_use]
     pub const fn patch(self) -> u32 {
         self.patch
     }
@@ -87,11 +91,15 @@ struct ServerProbe {
 
 /// Detects the server family, release and required session settings.
 ///
-/// Dovecote uses UTC civil timestamps and repeatable-read InnoDB snapshots;
+/// Dovecote uses UTC civil timestamps and repeatable-read `InnoDB` snapshots;
 /// accepting a non-UTC session would silently reinterpret every instant.
 /// Detection is capability-based and may accept newer releases that meet the
 /// adapter's minimum requirements. The support matrix advertises only the
 /// exact releases covered by conformance evidence.
+///
+/// # Errors
+/// Returns an error if server identity or capabilities cannot be determined
+/// from the database, or the active backend is unsupported.
 pub async fn detect(pool: &MySqlPool) -> Result<BackendInfo, SchemaError> {
     let mut connection = pool
         .acquire()

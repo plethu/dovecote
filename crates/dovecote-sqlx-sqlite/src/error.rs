@@ -1,4 +1,4 @@
-//! Typed errors at the SQLite adapter boundary.
+//! Typed errors at the `SQLite` adapter boundary.
 
 use dovecote::{DeliveryState, RowId};
 use thiserror::Error;
@@ -7,7 +7,7 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TransientKind {
-    /// SQLite could not acquire its single-writer lock before the configured
+    /// `SQLite` could not acquire its single-writer lock before the configured
     /// busy timeout. The complete operation has been rolled back.
     BusyExhausted,
 }
@@ -21,7 +21,7 @@ impl std::fmt::Display for TransientKind {
 pub(crate) fn is_busy(source: &sqlx::Error) -> bool {
     source
         .as_database_error()
-        .and_then(|error| error.code())
+        .and_then(sqlx::error::DatabaseError::code)
         .and_then(|code| code.parse::<i32>().ok())
         .is_some_and(|code| code == 5 || code == 6 || code & 0xff == 5 || code & 0xff == 6)
 }
@@ -30,10 +30,10 @@ pub(crate) fn is_busy(source: &sqlx::Error) -> bool {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum EnqueueError {
-    /// The transaction was not opened with SQLite's writer lock.
+    /// The transaction was not opened with `SQLite`'s writer lock.
     #[error("enqueue requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
-    /// The adapter's bounded busy policy is not representable by SQLite.
+    /// The adapter's bounded busy policy is not representable by `SQLite`.
     #[error("invalid SQLite busy configuration: {detail}")]
     Configuration {
         /// Diagnostic describing the invalid configuration.
@@ -63,16 +63,16 @@ pub enum EnqueueError {
         /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
@@ -97,7 +97,7 @@ impl EnqueueError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum ImportError {
-    /// The transaction was not opened with SQLite's writer lock.
+    /// The transaction was not opened with `SQLite`'s writer lock.
     #[error("import requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
     /// Existing identity has different immutable event content.
@@ -112,7 +112,7 @@ pub enum ImportError {
         /// Existing Dovecote row whose delivery state conflicted.
         existing_row_id: RowId,
     },
-    /// The adapter configuration is not valid for SQLite.
+    /// The adapter configuration is not valid for `SQLite`.
     #[error("invalid SQLite configuration: {detail}")]
     Configuration {
         /// Diagnostic describing the invalid configuration.
@@ -143,16 +143,16 @@ pub enum ImportError {
         /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
@@ -161,7 +161,7 @@ pub enum ImportError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum FinalizeError {
-    /// The transaction was not opened with SQLite's writer lock.
+    /// The transaction was not opened with `SQLite`'s writer lock.
     #[error("finalization requires a SQLite write transaction (BEGIN IMMEDIATE or a prior write)")]
     WriteTransactionRequired,
     /// No event row exists for the requested delivery.
@@ -198,16 +198,16 @@ pub enum FinalizeError {
         /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
@@ -271,7 +271,7 @@ pub enum ClaimError {
         /// Diagnostic describing the incompatible schema.
         detail: String,
     },
-    /// The adapter's bounded busy policy is not representable by SQLite.
+    /// The adapter's bounded busy policy is not representable by `SQLite`.
     #[error("invalid SQLite busy configuration: {detail}")]
     Configuration {
         /// Diagnostic describing the invalid configuration.
@@ -283,22 +283,22 @@ pub enum ClaimError {
         /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
 
 impl ClaimError {
-    pub(crate) fn sql(operation: &'static str, source: sqlx::Error) -> Self {
+    pub(crate) const fn sql(operation: &'static str, source: sqlx::Error) -> Self {
         Self::Sql { operation, source }
     }
 
@@ -347,7 +347,7 @@ pub enum MutationError {
         /// Diagnostic describing the incompatible schema.
         detail: String,
     },
-    /// The adapter's bounded busy policy is not representable by SQLite.
+    /// The adapter's bounded busy policy is not representable by `SQLite`.
     #[error("invalid SQLite busy configuration: {detail}")]
     Configuration {
         /// Diagnostic describing the invalid configuration.
@@ -365,22 +365,22 @@ pub enum MutationError {
         /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
 
 impl MutationError {
-    pub(crate) fn sql(operation: &'static str, source: sqlx::Error) -> Self {
+    pub(crate) const fn sql(operation: &'static str, source: sqlx::Error) -> Self {
         Self::Sql { operation, source }
     }
 
@@ -419,16 +419,16 @@ pub enum PageError {
         /// Operation being performed when retries were exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }
@@ -465,16 +465,16 @@ pub enum SchemaError {
         /// Operation being performed when the lock wait was exhausted.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
-    /// A non-busy SQLx operation failed.
+    /// A non-busy `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
         operation: &'static str,
         #[source]
-        /// Original underlying SQLite error.
+        /// Original underlying `SQLite` error.
         source: sqlx::Error,
     },
 }

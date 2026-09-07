@@ -269,7 +269,7 @@ pub(crate) fn assert_single_transient_failure(
     assert_eq!(
         source
             .as_database_error()
-            .and_then(|database| database.code().map(|code| code.into_owned()))
+            .and_then(|database| database.code().map(std::borrow::Cow::into_owned))
             .as_deref(),
         Some(expected_sqlstate)
     );

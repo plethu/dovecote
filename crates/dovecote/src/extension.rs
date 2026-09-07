@@ -13,11 +13,14 @@ use crate::{
 };
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-/// Validated lower-case name for a CloudEvents extension attribute.
+/// Validated lower-case name for a `CloudEvents` extension attribute.
 pub struct ExtensionName(String);
 
 impl ExtensionName {
     /// Creates an extension name, rejecting reserved, empty, or malformed names.
+    ///
+    /// # Errors
+    /// Returns an error for a reserved, empty, overlong, or non-lowercase-alphanumeric name.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         if value.is_empty() {
@@ -67,6 +70,7 @@ impl ExtensionName {
     }
 
     /// Returns the extension name as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -78,6 +82,9 @@ pub struct ExtensionString(String);
 
 impl ExtensionString {
     /// Creates an extension string. Empty strings are valid.
+    ///
+    /// # Errors
+    /// Returns an error for control characters or Unicode noncharacters.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("extension string", &value, None, true)?;
@@ -85,6 +92,7 @@ impl ExtensionString {
     }
 
     /// Returns the extension value as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -96,12 +104,17 @@ pub struct Timestamp(OffsetDateTime);
 
 impl Timestamp {
     /// Creates a timestamp after range, precision, and UTC normalization checks.
+    ///
+    /// # Errors
+    /// Returns an error for a time outside the supported epoch-through-year-9999
+    /// range or with finer than microsecond precision.
     pub fn new(value: OffsetDateTime) -> Result<Self, ValidationError> {
         let value = canonicalize_instant("extension timestamp", value)?;
         Ok(Self(value))
     }
 
     /// Returns the timestamp in UTC.
+    #[must_use]
     pub const fn get(&self) -> OffsetDateTime {
         self.0
     }
@@ -129,21 +142,34 @@ pub enum ExtensionValue {
 
 impl ExtensionValue {
     /// Creates a string extension value.
+    ///
+    /// # Errors
+    /// Returns an error for control characters or Unicode noncharacters.
     pub fn string(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::String(ExtensionString::new(value)?))
     }
 
     /// Creates an absolute URI extension value.
+    ///
+    /// # Errors
+    /// Returns an error for an empty value, forbidden characters, or invalid absolute URI syntax.
     pub fn uri(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::Uri(AbsoluteUri::new(value)?))
     }
 
     /// Creates a URI-reference extension value.
+    ///
+    /// # Errors
+    /// Returns an error for an empty value, forbidden characters, or invalid URI-reference syntax.
     pub fn uri_reference(value: impl Into<String>) -> Result<Self, ValidationError> {
         Ok(Self::UriReference(UriReference::new(value)?))
     }
 
     /// Creates a timestamp extension value in canonical UTC form.
+    ///
+    /// # Errors
+    /// Returns an error for a time outside the supported epoch-through-year-9999
+    /// range or with finer than microsecond precision.
     pub fn timestamp(value: OffsetDateTime) -> Result<Self, ValidationError> {
         Ok(Self::Timestamp(Timestamp::new(value)?))
     }
@@ -192,11 +218,16 @@ pub struct Extensions(BTreeMap<ExtensionName, ExtensionValue>);
 
 impl Extensions {
     /// Creates an empty extension set.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Inserts a value, rejecting duplicate names.
+    ///
+    /// # Errors
+    /// Returns an error for a duplicate extension name or invalid trace-context
+    /// value. The existing entry is preserved on failure.
     pub fn insert(
         &mut self,
         name: ExtensionName,
@@ -213,6 +244,7 @@ impl Extensions {
     }
 
     /// Looks up an extension by its validated name.
+    #[must_use]
     pub fn get(&self, name: &ExtensionName) -> Option<&ExtensionValue> {
         self.0.get(name)
     }
@@ -223,17 +255,22 @@ impl Extensions {
     }
 
     /// Serializes the extension set to its deterministic durable JSON form.
+    #[must_use]
     pub fn canonical_json(&self) -> String {
         let mut object = Map::new();
         for (name, value) in &self.0 {
             object.insert(name.0.clone(), value.tagged_json());
         }
-        serde_json::to_string(&object).expect("tagged extension values are JSON values")
+        Value::Object(object).to_string()
     }
 
     /// Decodes and checks the exact durable representation emitted by the
     /// canonical JSON method. Whitespace, duplicate members, and alternate
     /// spellings are rejected so a read cannot silently rewrite stored data.
+    ///
+    /// # Errors
+    /// Returns a decode error for malformed JSON, invalid typed values, duplicate
+    /// names, or any representation that differs from the canonical durable bytes.
     pub fn from_canonical_json(value: &str) -> Result<Self, ExtensionDecodeError> {
         let encoded = value;
         let value: Value =
@@ -325,11 +362,11 @@ impl Extensions {
         Ok(())
     }
 
-    fn value_boolean(value: bool) -> ExtensionValue {
+    const fn value_boolean(value: bool) -> ExtensionValue {
         ExtensionValue::Boolean(value)
     }
 
-    fn value_integer(value: i32) -> ExtensionValue {
+    const fn value_integer(value: i32) -> ExtensionValue {
         ExtensionValue::Integer(value)
     }
 

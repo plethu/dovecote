@@ -1,4 +1,4 @@
-//! Durable SQLite row hydration into core-owned values.
+//! Durable `SQLite` row hydration into core-owned values.
 
 use crate::enqueue::parse_timestamp;
 use dovecote::{
@@ -37,58 +37,95 @@ pub(crate) struct DurableRow {
     pub(crate) quarantine_reason: Option<String>,
 }
 
-pub(crate) fn hydrate_event(row: &DurableRow) -> Result<StoredEvent, String> {
+/// Borrowed immutable event columns; delivery state is validated separately.
+pub(crate) struct EventRow<'a> {
+    pub(crate) stream: &'a str,
+    pub(crate) specversion: &'a str,
+    pub(crate) event_id: &'a str,
+    pub(crate) source: &'a str,
+    pub(crate) event_type: &'a str,
+    pub(crate) subject: Option<&'a str>,
+    pub(crate) occurred_at: Option<&'a str>,
+    pub(crate) datacontenttype: Option<&'a str>,
+    pub(crate) dataschema: Option<&'a str>,
+    pub(crate) partitionkey: Option<&'a str>,
+    pub(crate) extensions: &'a str,
+    pub(crate) data_kind: Option<&'a str>,
+    pub(crate) data: Option<&'a [u8]>,
+}
+
+impl DurableRow {
+    pub(crate) fn event_row(&self) -> EventRow<'_> {
+        EventRow {
+            stream: &self.stream,
+            specversion: &self.specversion,
+            event_id: &self.event_id,
+            source: &self.source,
+            event_type: &self.event_type,
+            subject: self.subject.as_deref(),
+            occurred_at: self.occurred_at.as_deref(),
+            datacontenttype: self.datacontenttype.as_deref(),
+            dataschema: self.dataschema.as_deref(),
+            partitionkey: self.partitionkey.as_deref(),
+            extensions: &self.extensions,
+            data_kind: self.data_kind.as_deref(),
+            data: self.data.as_deref(),
+        }
+    }
+}
+
+pub(crate) fn hydrate_event(row: &EventRow<'_>) -> Result<StoredEvent, String> {
     if row.specversion != dovecote::SPEC_VERSION {
         return Err("stored event has an unsupported specversion".to_owned());
     }
 
     let stream =
-        dovecote::StreamName::new(row.stream.clone()).map_err(|error| error.to_string())?;
-    let id = dovecote::EventId::new(row.event_id.clone()).map_err(|error| error.to_string())?;
+        dovecote::StreamName::new(row.stream.to_owned()).map_err(|error| error.to_string())?;
+    let id = dovecote::EventId::new(row.event_id.to_owned()).map_err(|error| error.to_string())?;
     let source =
-        dovecote::EventSource::new(row.source.clone()).map_err(|error| error.to_string())?;
+        dovecote::EventSource::new(row.source.to_owned()).map_err(|error| error.to_string())?;
     let event_type =
-        dovecote::EventType::new(row.event_type.clone()).map_err(|error| error.to_string())?;
+        dovecote::EventType::new(row.event_type.to_owned()).map_err(|error| error.to_string())?;
     let mut builder = NewEvent::builder(stream, id, source, event_type);
-    builder = match &row.subject {
+    builder = match row.subject {
         Some(value) => builder.subject(
-            dovecote::EventSubject::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::EventSubject::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
-    if let Some(value) = &row.occurred_at {
+    if let Some(value) = row.occurred_at {
         builder = builder.time(parse_timestamp(value)?);
     }
-    builder = match &row.datacontenttype {
+    builder = match row.datacontenttype {
         Some(value) => builder.datacontenttype(
-            dovecote::ContentType::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::ContentType::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
-    builder = match &row.dataschema {
+    builder = match row.dataschema {
         Some(value) => builder.dataschema(
-            dovecote::SchemaUri::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::SchemaUri::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
-    builder = match &row.partitionkey {
+    builder = match row.partitionkey {
         Some(value) => builder.partitionkey(
-            dovecote::PartitionKey::new(value.clone()).map_err(|error| error.to_string())?,
+            dovecote::PartitionKey::new(value.to_owned()).map_err(|error| error.to_string())?,
         ),
         None => builder,
     };
     builder = builder.extensions(
-        dovecote::Extensions::from_canonical_json(&row.extensions)
+        dovecote::Extensions::from_canonical_json(row.extensions)
             .map_err(|error| error.to_string())?,
     );
-    match (&row.data_kind, &row.data) {
+    match (row.data_kind, row.data) {
         (None, None) => {}
-        (Some(kind), Some(bytes)) if kind == "json" => {
+        (Some("json"), Some(bytes)) => {
             builder =
-                builder.data(EventData::json(bytes.clone()).map_err(|error| error.to_string())?);
+                builder.data(EventData::json(bytes.to_owned()).map_err(|error| error.to_string())?);
         }
-        (Some(kind), Some(bytes)) if kind == "binary" => {
-            builder = builder.data(EventData::binary(bytes.clone()));
+        (Some("binary"), Some(bytes)) => {
+            builder = builder.data(EventData::binary(bytes.to_owned()));
         }
         _ => return Err("stored data kind and data columns do not agree".to_owned()),
     }
@@ -102,7 +139,7 @@ pub(crate) fn hydrate_event(row: &DurableRow) -> Result<StoredEvent, String> {
 pub(crate) fn hydrate_page(row: DurableRow) -> Result<PagedEvent, String> {
     let tenant_id = TenantId::new(row.tenant_id.clone()).map_err(|error| error.to_string())?;
     let row_id = RowId::new(row.row_id).map_err(|error| error.to_string())?;
-    let event = hydrate_event(&row)?;
+    let event = hydrate_event(&row.event_row())?;
     let state = row
         .state
         .ok_or_else(|| "event has no required delivery row".to_owned())?;

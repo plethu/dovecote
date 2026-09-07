@@ -110,7 +110,7 @@ async fn paging_is_ordered_bounded_and_includes_every_delivery_state_when_config
         assert_eq!(first[1].delivery().state(), DeliveryState::Claimed);
 
         let second = adapter
-            .page(first.last().map(|row| row.row_id()), limit)
+            .page(first.last().map(dovecote::PagedEvent::row_id), limit)
             .await?;
         assert_eq!(second.len(), 2);
         assert_eq!(second[0].row_id(), quarantined_id);
@@ -120,7 +120,10 @@ async fn paging_is_ordered_bounded_and_includes_every_delivery_state_when_config
 
         let repeated = adapter.page(None, Limit::new(100)?).await?;
         assert_eq!(
-            repeated.iter().map(|row| row.row_id()).collect::<Vec<_>>(),
+            repeated
+                .iter()
+                .map(dovecote::PagedEvent::row_id)
+                .collect::<Vec<_>>(),
             vec![delivered_id, claimed_id, quarantined_id, pending_id]
         );
         assert!(!repeated.iter().any(|row| row.row_id() == skipped_id));
@@ -401,7 +404,7 @@ async fn commit_inversion_exposes_live_limitation_and_snapshot_boundary_when_con
         assert_eq!(
             live_before
                 .iter()
-                .map(|row| row.row_id())
+                .map(dovecote::PagedEvent::row_id)
                 .collect::<Vec<_>>(),
             vec![visible_first, visible_second, visible_third, later_id]
         );
@@ -422,7 +425,7 @@ async fn commit_inversion_exposes_live_limitation_and_snapshot_boundary_when_con
         assert_eq!(
             first_snapshot_page
                 .iter()
-                .map(|row| row.row_id())
+                .map(dovecote::PagedEvent::row_id)
                 .collect::<Vec<_>>(),
             vec![visible_first, visible_second]
         );
@@ -434,7 +437,7 @@ async fn commit_inversion_exposes_live_limitation_and_snapshot_boundary_when_con
         assert_eq!(
             second_snapshot_page
                 .iter()
-                .map(|row| row.row_id())
+                .map(dovecote::PagedEvent::row_id)
                 .collect::<Vec<_>>(),
             vec![visible_third, later_id]
         );

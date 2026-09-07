@@ -2,7 +2,14 @@ set shell := ["bash", "-euo", "pipefail", "-c"]
 
 fmt:
     cargo fmt --all
+    cargo fmt --manifest-path tests/fixture-runner/Cargo.toml
     taplo fmt
+
+clippy:
+    scripts/check-rust.sh
+
+test *args:
+    cargo test --workspace --all-features {{args}}
 
 check:
     scripts/check-project-gates.sh
@@ -13,3 +20,6 @@ verify:
 supply-chain:
     if ! command -v cargo-deny >/dev/null 2>&1; then echo "cargo-deny is unavailable; run 'mise install'" >&2; exit 2; fi
     cargo deny check advisories bans licenses sources
+
+check-migration-runner:
+    scripts/check-migration-runner.sh

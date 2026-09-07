@@ -24,4 +24,3 @@ sqlx = { version = "0.9.0", default-features = false, features = [
 ] }
 time = { version = "0.3.41", features = ["parsing", "formatting"] }
 tokio = { version = "1.48.0", features = ["macros", "rt-multi-thread"] }
-uuid = { version = "1.18.1", features = ["v4"] }

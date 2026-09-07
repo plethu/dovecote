@@ -82,7 +82,7 @@ jobs:
       - name: Run serialized backend checks
         env:
           RUST_TEST_THREADS: "1"
-        run: mise run check
+        run: mise exec rust@${{ matrix.rust }} -- just check
       - name: Run complete-history fixture (PostgreSQL 17.11)
         if: matrix.rust == 'stable'
         env:
@@ -162,7 +162,7 @@ jobs:
       - name: Run serialized backend checks
         env:
           RUST_TEST_THREADS: "1"
-        run: mise run check
+        run: mise exec rust@${{ matrix.rust }} -- just check
       - name: Run complete-history fixture (MySQL 8.4.11)
         if: matrix.rust == 'stable'
         env:
@@ -242,7 +242,7 @@ jobs:
       - name: Run serialized backend checks
         env:
           RUST_TEST_THREADS: "1"
-        run: mise run check
+        run: mise exec rust@${{ matrix.rust }} -- just check
       - name: Run complete-history fixture (MySQL Innovation 26.7.0)
         if: matrix.rust == 'stable'
         env:
@@ -322,7 +322,7 @@ jobs:
       - name: Run serialized backend checks
         env:
           RUST_TEST_THREADS: "1"
-        run: mise run check
+        run: mise exec rust@${{ matrix.rust }} -- just check
       - name: Run MariaDB maintenance-window fixture (10.3.17 to 11.8.6)
         if: matrix.rust == 'stable'
         env:
@@ -383,7 +383,7 @@ jobs:
           cargo test -p dovecote-sqlx-sqlite --test sqlite
           database_identity_boundary_inserts_and_deduplicates_2048_bytes
           -- --nocapture
-      - run: mise run check
+      - run: mise exec rust@${{ matrix.rust }} -- just check
       - name: Run complete-history fixture (SQLite linked runtime)
         if: matrix.rust == 'stable'
         run: tests/complete-history-migration.sh sqlite

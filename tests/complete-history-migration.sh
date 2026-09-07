@@ -213,23 +213,20 @@ run_fixture_runner() {
     local action="${7:-}"
     local target_dir="${CARGO_TARGET_DIR:-${repo_root}/tests/fixture-runner/target}"
     local ledger="${DOVECOTE_FIXTURE_LEDGER:-${repo_root}/tests/fixture-ledger.jsonl}"
+    local arguments=("${backend}" "${url}" "${fixture}" "${keepsake_audit_high_water}" "${keepsake_outbox_high_water}" "${gatekeep_audit_high_water}" "${gatekeep_outbox_high_water}")
     if [[ -n "${stop_after}" ]]; then
-        if [[ -n "${action}" ]]; then
-            DOVECOTE_FIXTURE_LEDGER="${ledger}" CARGO_TARGET_DIR="${target_dir}" cargo run --manifest-path "${runner_manifest}" \
-                --locked --offline -- "${backend}" "${url}" "${fixture}" "${keepsake_audit_high_water}" "${keepsake_outbox_high_water}" "${gatekeep_audit_high_water}" "${gatekeep_outbox_high_water}" "${stop_after}" "${action}"
-        else
-            DOVECOTE_FIXTURE_LEDGER="${ledger}" CARGO_TARGET_DIR="${target_dir}" cargo run --manifest-path "${runner_manifest}" \
-                --locked --offline -- "${backend}" "${url}" "${fixture}" "${keepsake_audit_high_water}" "${keepsake_outbox_high_water}" "${gatekeep_audit_high_water}" "${gatekeep_outbox_high_water}" "${stop_after}"
-        fi
-    else
-        if [[ "${action}" == "verify" ]]; then
-            DOVECOTE_FIXTURE_LEDGER="${ledger}" CARGO_TARGET_DIR="${target_dir}" cargo run --manifest-path "${runner_manifest}" \
-                --locked --offline -- "${backend}" "${url}" "${fixture}" "${keepsake_audit_high_water}" "${keepsake_outbox_high_water}" "${gatekeep_audit_high_water}" "${gatekeep_outbox_high_water}" verify
-        else
-            DOVECOTE_FIXTURE_LEDGER="${ledger}" CARGO_TARGET_DIR="${target_dir}" cargo run --manifest-path "${runner_manifest}" \
-                --locked --offline -- "${backend}" "${url}" "${fixture}" "${keepsake_audit_high_water}" "${keepsake_outbox_high_water}" "${gatekeep_audit_high_water}" "${gatekeep_outbox_high_water}"
-        fi
+        arguments+=("${stop_after}")
     fi
+    if [[ -n "${action}" ]]; then
+        arguments+=("${action}")
+    fi
+    # Cargo run prints the full process command, including the database URL.
+    # Build separately so both successful and injected-failure runs use only
+    # the runner's fixed diagnostic categories.
+    CARGO_TARGET_DIR="${target_dir}" cargo build --quiet --manifest-path "${runner_manifest}" \
+        --locked --offline || return
+    DOVECOTE_FIXTURE_LEDGER="${ledger}" \
+        "${target_dir}/debug/dovecote-migration-fixture-runner" "${arguments[@]}"
 }
 
 sqlite_assertions() {

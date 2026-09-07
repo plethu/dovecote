@@ -1,4 +1,4 @@
-/// Normalizes PostgreSQL's version-dependent catalog rendering for comparison.
+/// Normalizes `PostgreSQL`'s version-dependent catalog rendering for comparison.
 pub(crate) fn normalize_sql(value: &str) -> String {
     let mut value = value.to_ascii_lowercase();
     for cast in [

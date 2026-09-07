@@ -1,4 +1,4 @@
-//! SQLite migration-import integration coverage.
+//! `SQLite` migration-import integration coverage.
 
 #[path = "import/concurrency.rs"]
 mod concurrency;

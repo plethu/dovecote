@@ -1,4 +1,4 @@
-//! SQLite live and finite snapshot paging.
+//! `SQLite` live and finite snapshot paging.
 
 use crate::{
     begin_read, commit_transaction,
@@ -74,7 +74,7 @@ pub(crate) async fn begin_snapshot_for_scope(
     })
 }
 
-/// A finite pager retaining one SQLite read transaction. The explicit marker
+/// A finite pager retaining one `SQLite` read transaction. The explicit marker
 /// makes accidental movement across unrelated executors a compile-time error.
 ///
 /// ```compile_fail
@@ -97,19 +97,26 @@ pub struct SnapshotPager {
 
 impl SnapshotPager {
     /// Returns the last row ID returned by a non-empty page.
+    #[must_use]
     pub const fn cursor(&self) -> Option<RowId> {
         self.cursor
     }
     /// Returns the maximum row ID visible to this pager.
+    #[must_use]
     pub const fn upper_bound(&self) -> Option<RowId> {
         self.upper_bound
     }
     /// Returns whether the pager has returned its final page.
+    #[must_use]
     pub const fn is_exhausted(&self) -> bool {
         self.exhausted
     }
 
     /// Reads the next bounded page from the retained snapshot.
+    ///
+    /// # Errors
+    /// Returns an error if a stored event or delivery cannot be validated or the
+    /// database read fails. Roll back or drop the pager after a failed read.
     pub async fn next_page(&mut self, limit: Limit) -> Result<Vec<PagedEvent>, PageError> {
         if self.exhausted {
             return Ok(Vec::new());
@@ -151,6 +158,10 @@ impl SnapshotPager {
     }
 
     /// Commits the read-only snapshot transaction and releases its connection.
+    ///
+    /// # Errors
+    /// Returns a database error if committing the read transaction fails. A lost
+    /// commit response does not establish whether the server committed.
     pub async fn finish(mut self) -> Result<(), PageError> {
         let Some(transaction) = self.transaction.take() else {
             return Ok(());
@@ -160,6 +171,9 @@ impl SnapshotPager {
             .map_err(|source| PageError::sql("finish snapshot transaction", source))
     }
     /// Rolls back the snapshot transaction and releases its connection.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn rollback(mut self) -> Result<(), PageError> {
         let Some(transaction) = self.transaction.take() else {
             return Ok(());
@@ -170,6 +184,9 @@ impl SnapshotPager {
             .map_err(|source| PageError::sql("rollback snapshot transaction", source))
     }
     /// Closes the pager by rolling back its transaction.
+    ///
+    /// # Errors
+    /// Returns a database error if rolling back the read transaction fails.
     pub async fn close(self) -> Result<(), PageError> {
         self.rollback().await
     }

@@ -1,4 +1,4 @@
-//! A small, runnable SQLite walkthrough.
+//! A small, runnable `SQLite` walkthrough.
 //!
 //! This example keeps the worker loop deliberately visible and incomplete. It
 //! demonstrates the boundaries an application owns: schema installation,

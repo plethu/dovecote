@@ -77,9 +77,9 @@ impl Backend {
             "sqlite" => Ok(Self::Sqlite),
             "postgres" => Ok(Self::Postgres),
             "mysql" | "mysql-innovation" | "mariadb" => Ok(Self::MySql),
-            other => Err(invalid(format!(
-                "backend must be sqlite, postgres, mysql, mysql-innovation, or mariadb, got {other:?}"
-            ))),
+            _ => Err(invalid(
+                "backend must be sqlite, postgres, mysql, mysql-innovation, or mariadb".into(),
+            )),
         }
     }
 }
@@ -88,82 +88,79 @@ pub(super) fn invalid(message: String) -> Box<dyn Error> {
     Box::new(io::Error::new(ErrorKind::InvalidData, message))
 }
 
-pub(super) fn parse_args() -> Result<
-    (
-        Backend,
-        String,
-        String,
-        SourceHighWaters,
-        Option<usize>,
-        bool,
-        bool,
-        bool,
-    ),
-    Box<dyn Error>,
-> {
-    let mut args = env::args().skip(1);
-    let backend = Backend::parse(
-        &args
-            .next()
-            .ok_or_else(|| invalid("missing backend".into()))?,
-    )?;
-    let url = args
-        .next()
-        .ok_or_else(|| invalid("missing database URL".into()))?;
-    let fixture = args
-        .next()
-        .ok_or_else(|| invalid("missing fixture path".into()))?;
-    let keepsake_audit = args
-        .next()
-        .ok_or_else(|| invalid("missing Keepsake audit high-water mark".into()))?
-        .parse::<u64>()?;
-    let keepsake_outbox = args
-        .next()
-        .ok_or_else(|| invalid("missing Keepsake outbox high-water mark".into()))?
-        .parse::<u64>()?;
-    let gatekeep_audit = args
-        .next()
-        .ok_or_else(|| invalid("missing Gatekeep audit high-water mark".into()))?
-        .parse::<u64>()?;
-    let gatekeep_outbox = args
-        .next()
-        .ok_or_else(|| invalid("missing Gatekeep outbox high-water mark".into()))?
-        .parse::<u64>()?;
+/// One mutually exclusive migration execution mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RunMode {
+    Import,
+    Verify,
+    Rollback,
+    CrashBeforeCheckpoint,
+}
+
+impl RunMode {
+    fn parse(value: Option<&str>) -> Result<Self, Box<dyn Error>> {
+        match value {
+            None => Ok(Self::Import),
+            Some("verify") => Ok(Self::Verify),
+            Some("rollback") => Ok(Self::Rollback),
+            Some("crash") => Ok(Self::CrashBeforeCheckpoint),
+            Some(_) => Err(invalid("expected verify, rollback, or crash".into())),
+        }
+    }
+}
+
+/// The fixed positional protocol used by the migration shell harness.
+/// Credentials deliberately have no `Debug` representation.
+pub(super) struct Invocation {
+    pub(super) backend: Backend,
+    pub(super) url: String,
+    pub(super) fixture_path: String,
+    pub(super) high_waters: SourceHighWaters,
+    pub(super) stop_after: Option<usize>,
+    pub(super) mode: RunMode,
+}
+
+pub(super) fn parse_args() -> Result<Invocation, Box<dyn Error>> {
+    parse_invocation(env::args().skip(1))
+}
+
+fn parse_invocation(mut args: impl Iterator<Item = String>) -> Result<Invocation, Box<dyn Error>> {
+    let backend = Backend::parse(&required(&mut args, "backend")?)?;
+    let url = required(&mut args, "database URL")?;
+    let fixture_path = required(&mut args, "fixture path")?;
     let high_waters = SourceHighWaters {
-        keepsake_audit,
-        keepsake_outbox,
-        gatekeep_audit,
-        gatekeep_outbox,
+        keepsake_audit: required(&mut args, "Keepsake audit high-water mark")?.parse()?,
+        keepsake_outbox: required(&mut args, "Keepsake outbox high-water mark")?.parse()?,
+        gatekeep_audit: required(&mut args, "Gatekeep audit high-water mark")?.parse()?,
+        gatekeep_outbox: required(&mut args, "Gatekeep outbox high-water mark")?.parse()?,
     };
     let optional = args.next();
-    let (stop_after, verify, rollback, crash) = match optional.as_deref() {
-        None => (None, false, false, false),
-        Some("verify") => (None, true, false, false),
-        Some("rollback") => (None, false, true, false),
-        Some("crash") => (None, false, false, true),
+    let (stop_after, mode) = match optional.as_deref() {
+        None | Some("verify" | "rollback" | "crash") => {
+            (None, RunMode::parse(optional.as_deref())?)
+        }
         Some(value) => {
+            let limit = value.parse()?;
             let action = args.next();
-            (
-                Some(value.parse::<usize>()?),
-                action.as_deref() == Some("verify"),
-                false,
-                action.as_deref() == Some("crash"),
-            )
+            (Some(limit), RunMode::parse(action.as_deref())?)
         }
     };
     if args.next().is_some() {
         return Err(invalid("unexpected argument".into()));
     }
-    Ok((
+    Ok(Invocation {
         backend,
         url,
-        fixture,
+        fixture_path,
         high_waters,
         stop_after,
-        verify,
-        rollback,
-        crash,
-    ))
+        mode,
+    })
+}
+
+fn required(args: &mut impl Iterator<Item = String>, name: &str) -> Result<String, Box<dyn Error>> {
+    args.next()
+        .ok_or_else(|| invalid(format!("missing {name}")))
 }
 
 pub(super) fn event_id(item: &FixtureEvent, project: &str) -> String {
@@ -226,5 +223,43 @@ pub(super) fn delivery_state(item: &FixtureEvent) -> Result<ImportedDeliveryStat
         state => Err(invalid(format!(
             "fixture state {state:?} is not portable; active/expired claims must be fenced first"
         ))),
+    }
+}
+
+#[cfg(test)]
+mod invocation_tests {
+    use super::{RunMode, parse_invocation};
+
+    fn arguments(tail: &[&str]) -> impl Iterator<Item = String> {
+        [
+            "sqlite",
+            "private-database-url",
+            "fixture.json",
+            "1",
+            "2",
+            "3",
+            "4",
+        ]
+        .into_iter()
+        .chain(tail.iter().copied())
+        .map(str::to_owned)
+    }
+
+    #[test]
+    fn bounded_rollback_is_an_explicit_mode() -> Result<(), Box<dyn std::error::Error>> {
+        let invocation = parse_invocation(arguments(&["2", "rollback"]))?;
+        assert_eq!(invocation.stop_after, Some(2));
+        assert_eq!(invocation.mode, RunMode::Rollback);
+        Ok(())
+    }
+
+    #[test]
+    fn unknown_mode_does_not_silently_import() {
+        let result = parse_invocation(arguments(&["2", "private-unknown-mode"]));
+        let error = match result {
+            Err(error) => error,
+            Ok(_) => panic!("unknown mode was accepted"),
+        };
+        assert_eq!(error.to_string(), "expected verify, rollback, or crash");
     }
 }

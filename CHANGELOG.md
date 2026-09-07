@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.2] - 2026-09-07
+
+- Share each backend's stored-event validator between enqueue replay, paging
+  and claims; retain immutable payload and delivery-history contracts.
+- Separate MySQL claim discovery and preparation from transaction completion,
+  and retain scoped SQLite claim requests across busy retries.
+- Consolidate catalog expression normalization and checked byte traversal.
+- Document public error and rollback contracts, strengthen inherited lint and
+  dependency gates, and expose a checked standalone migration runner.
+- Reject unknown migration-fixture modes before database access and represent
+  rollback/crash/verification as exclusive execution modes.
+- Preserve every published migration artifact and the existing 0.2 public APIs.
+  No schema migration is required when upgrading from 0.2.1.
+
 ## [0.2.1] - 2026-09-01
 
 ### Fixed

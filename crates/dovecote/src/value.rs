@@ -18,6 +18,10 @@ pub struct StreamName(String);
 
 impl StreamName {
     /// Creates a stream name using Dovecote's portable routing grammar.
+    ///
+    /// # Errors
+    /// Returns an error for an empty or overlong stream, a non-alphanumeric first
+    /// byte, or a byte outside the portable alphanumeric, dot, underscore and hyphen grammar.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("stream", &value, Some(MAX_STREAM_BYTES), false)?;
@@ -28,13 +32,18 @@ impl StreamName {
             return Err(ValidationError::new("stream", ValidationKind::Characters));
         }
 
-        if !value.as_bytes()[0].is_ascii_alphanumeric() {
+        if !value
+            .as_bytes()
+            .first()
+            .is_some_and(u8::is_ascii_alphanumeric)
+        {
             return Err(ValidationError::new("stream", ValidationKind::Characters));
         }
         Ok(Self(value))
     }
 
     /// Returns the stream name as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -48,6 +57,10 @@ macro_rules! bounded_string {
 
         impl $name {
             /// Creates the validated value.
+            ///
+            /// # Errors
+            /// Returns an error for an empty or overlong value, control characters, or
+            /// Unicode noncharacters.
             pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
                 let value = value.into();
                 validate_string($field, &value, Some($maximum), false)?;
@@ -73,6 +86,9 @@ pub struct TenantId(String);
 
 impl TenantId {
     /// Creates a tenant identity, rejecting empty and whitespace-only values.
+    ///
+    /// # Errors
+    /// Returns an error for an empty, whitespace-only, overlong or invalid-character tenant.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("tenant id", &value, Some(MAX_TENANT_ID_BYTES), false)?;
@@ -83,17 +99,22 @@ impl TenantId {
     }
 
     /// Returns the value as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-/// Validated CloudEvents source URI-reference.
+/// Validated `CloudEvents` source URI-reference.
 pub struct EventSource(String);
 
 impl EventSource {
     /// Creates a source URI-reference.
+    ///
+    /// # Errors
+    /// Returns an error for an empty or overlong value, forbidden characters, or
+    /// invalid URI-reference syntax.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_uri_reference("source", &value, Some(MAX_SOURCE_BYTES), false)?;
@@ -101,6 +122,7 @@ impl EventSource {
     }
 
     /// Returns the source as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -112,6 +134,9 @@ pub struct AbsoluteUri(String);
 
 impl AbsoluteUri {
     /// Parses and validates an absolute URI.
+    ///
+    /// # Errors
+    /// Returns an error for an empty value, forbidden characters, or invalid absolute URI syntax.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("URI", &value, None, false)?;
@@ -121,6 +146,7 @@ impl AbsoluteUri {
     }
 
     /// Returns the URI as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -132,6 +158,9 @@ pub struct UriReference(String);
 
 impl UriReference {
     /// Parses and validates a URI-reference.
+    ///
+    /// # Errors
+    /// Returns an error for an empty value, forbidden characters, or invalid URI-reference syntax.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_uri_reference("URI-reference", &value, None, false)?;
@@ -139,17 +168,22 @@ impl UriReference {
     }
 
     /// Returns the URI-reference as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
-/// Validated absolute CloudEvents schema URI.
+/// Validated absolute `CloudEvents` schema URI.
 pub struct SchemaUri(AbsoluteUri);
 
 impl SchemaUri {
     /// Parses and validates a bounded absolute schema URI.
+    ///
+    /// # Errors
+    /// Returns an error for an empty or overlong value, forbidden characters, or
+    /// invalid absolute URI syntax.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string("schema URI", &value, Some(MAX_SCHEMA_URI_BYTES), false)?;
@@ -157,6 +191,7 @@ impl SchemaUri {
     }
 
     /// Returns the schema URI as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
     }
@@ -168,6 +203,10 @@ pub struct ContentType(String);
 
 impl ContentType {
     /// Parses a media type within the public byte bound.
+    ///
+    /// # Errors
+    /// Returns an error for an empty or overlong value, forbidden characters, or
+    /// invalid media-type syntax.
     pub fn new(value: impl Into<String>) -> Result<Self, ValidationError> {
         let value = value.into();
         validate_string(
@@ -182,11 +221,13 @@ impl ContentType {
     }
 
     /// Returns the media type as a string slice.
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// Returns whether this media type is JSON or has a `+json` suffix.
+    #[must_use]
     pub fn is_json(&self) -> bool {
         let media_type =
             mime::Mime::from_str(&self.0).expect("ContentType validates on construction");
@@ -200,6 +241,9 @@ pub struct JsonData(Vec<u8>);
 
 impl JsonData {
     /// Parses exactly one JSON value encoded as UTF-8.
+    ///
+    /// # Errors
+    /// Returns a JSON validation error unless the bytes contain exactly one UTF-8 JSON value.
     pub fn new(value: impl Into<Vec<u8>>) -> Result<Self, ValidationError> {
         let value = value.into();
         std::str::from_utf8(&value)
@@ -210,6 +254,7 @@ impl JsonData {
     }
 
     /// Returns the original validated JSON bytes.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.0
     }
@@ -231,6 +276,9 @@ pub enum EventData {
 
 impl EventData {
     /// Validates and wraps JSON data bytes.
+    ///
+    /// # Errors
+    /// Returns a JSON validation error unless the bytes contain exactly one UTF-8 JSON value.
     pub fn json(value: impl Into<Vec<u8>>) -> Result<Self, ValidationError> {
         Ok(Self::Json(JsonData::new(value)?))
     }
@@ -241,6 +289,7 @@ impl EventData {
     }
 
     /// Returns the exact data bytes.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         match self {
             Self::Json(value) => value.as_bytes(),
@@ -249,6 +298,7 @@ impl EventData {
     }
 
     /// Returns whether this value contains validated JSON data.
+    #[must_use]
     pub const fn is_json(&self) -> bool {
         matches!(self, Self::Json(_))
     }

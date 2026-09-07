@@ -1,4 +1,4 @@
-//! MySQL/MariaDB information-schema verification for the installed schema.
+//! `MySQL`/`MariaDB` information-schema verification for the installed schema.
 
 mod catalog;
 mod contracts;
@@ -19,7 +19,11 @@ struct SchemaMarker {
     rolling_compatible: bool,
 }
 
-/// Verifies the active connection against the supported MySQL/MariaDB schema.
+/// Verifies the active connection against the supported `MySQL`/`MariaDB` schema.
+///
+/// # Errors
+/// Returns an error for an unsupported backend, missing or incompatible
+/// migration markers, tables, constraints or indexes, or failed catalog reads.
 pub async fn check_schema(pool: &MySqlPool) -> Result<(), SchemaError> {
     let mut connection = pool
         .acquire()

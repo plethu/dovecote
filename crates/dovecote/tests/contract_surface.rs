@@ -87,14 +87,7 @@ fn state_constructor_timestamps_are_canonical_utc() {
     .unwrap();
     assert_eq!(claimed.claim_expires_at(), utc);
 
-    let paged = PagedEvent::new(
-        tenant.clone(),
-        RowId::new(1).unwrap(),
-        event,
-        local,
-        snapshot,
-    )
-    .unwrap();
+    let paged = PagedEvent::new(tenant, RowId::new(1).unwrap(), event, local, snapshot).unwrap();
     assert_eq!(paged.enqueued_at(), utc);
 }
 

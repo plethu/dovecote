@@ -1,7 +1,7 @@
 //! Opt-in evidence for a bounded, high-cardinality tenant population.
 //!
 //! This is deliberately ignored: it creates 10,000 tenants and is intended for
-//! a disposable PostgreSQL instance, not the ordinary adapter test suite.
+//! a disposable `PostgreSQL` instance, not the ordinary adapter test suite.
 
 use super::support::*;
 

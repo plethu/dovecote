@@ -60,12 +60,17 @@ pub enum ImportedDeliveryState {
 impl ImportedDeliveryState {
     /// Constructs a pending import.  The adapter supplies database time for
     /// both `enqueued_at` and `available_at` when it performs the import.
+    #[must_use]
     pub const fn pending() -> Self {
         Self::Pending
     }
 
     /// Constructs a delivered import after checking the common Dovecote
     /// instant range and exact microsecond precision.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn delivered(delivered_at: OffsetDateTime) -> Result<Self, ValidationError> {
         let delivered_at = canonicalize_instant("delivered_at", delivered_at)?;
         Ok(Self::Delivered { delivered_at })
@@ -74,6 +79,10 @@ impl ImportedDeliveryState {
     /// Validates a state supplied through the public enum constructor.  This
     /// also protects callers that pattern-match and construct the public
     /// `Delivered` variant directly.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn validate(self) -> Result<(), ValidationError> {
         match self {
             Self::Pending => Ok(()),
@@ -82,6 +91,7 @@ impl ImportedDeliveryState {
     }
 
     /// Returns the delivered instant, if this is a delivered import, in UTC.
+    #[must_use]
     pub const fn delivered_at(self) -> Option<OffsetDateTime> {
         match self {
             Self::Pending => None,
@@ -137,11 +147,13 @@ pub struct ClaimToken([u8; CLAIM_TOKEN_BYTES]);
 
 impl ClaimToken {
     /// Creates a claim token from its durable fixed-width bytes.
+    #[must_use]
     pub const fn from_bytes(value: [u8; CLAIM_TOKEN_BYTES]) -> Self {
         Self(value)
     }
 
     /// Returns the token bytes for persistence or comparison.
+    #[must_use]
     pub const fn as_bytes(&self) -> &[u8; CLAIM_TOKEN_BYTES] {
         &self.0
     }
@@ -207,6 +219,10 @@ pub enum DeliverySnapshot {
 
 impl DeliverySnapshot {
     /// Constructs a pending snapshot, canonicalizing its timestamp to UTC.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn pending(
         available_at: OffsetDateTime,
         attempts: AttemptCount,
@@ -221,6 +237,10 @@ impl DeliverySnapshot {
     }
 
     /// Constructs a claimed snapshot, canonicalizing its timestamps to UTC.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn claimed(
         available_at: OffsetDateTime,
         worker: WorkerId,
@@ -240,6 +260,10 @@ impl DeliverySnapshot {
     }
 
     /// Constructs a delivered snapshot, canonicalizing its timestamps to UTC.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn delivered(
         available_at: OffsetDateTime,
         delivered_at: OffsetDateTime,
@@ -257,6 +281,10 @@ impl DeliverySnapshot {
     }
 
     /// Constructs a quarantined snapshot, canonicalizing its timestamps to UTC.
+    ///
+    /// # Errors
+    /// Returns an error for timestamps outside the supported range or with
+    /// finer than microsecond precision.
     pub fn quarantined(
         available_at: OffsetDateTime,
         quarantined_at: OffsetDateTime,
@@ -276,6 +304,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the lifecycle state represented by this snapshot.
+    #[must_use]
     pub const fn state(&self) -> DeliveryState {
         match self {
             Self::Pending { .. } => DeliveryState::Pending,
@@ -286,6 +315,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the number of delivery attempts.
+    #[must_use]
     pub const fn attempts(&self) -> AttemptCount {
         match self {
             Self::Pending { attempts, .. }
@@ -296,7 +326,8 @@ impl DeliverySnapshot {
     }
 
     /// Returns the most recent retryable failure, if present.
-    pub fn last_failure(&self) -> Option<&Failure> {
+    #[must_use]
+    pub const fn last_failure(&self) -> Option<&Failure> {
         match self {
             Self::Pending { last_failure, .. }
             | Self::Claimed { last_failure, .. }
@@ -306,6 +337,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the availability instant in UTC, if represented.
+    #[must_use]
     pub const fn available_at(&self) -> Option<OffsetDateTime> {
         match self {
             Self::Pending { available_at, .. }
@@ -318,6 +350,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the claim expiry instant in UTC, if claimed.
+    #[must_use]
     pub const fn claim_expires_at(&self) -> Option<OffsetDateTime> {
         match self {
             Self::Claimed { expires_at, .. } => Some(expires_at.to_offset(time::UtcOffset::UTC)),
@@ -326,7 +359,8 @@ impl DeliverySnapshot {
     }
 
     /// Returns the claiming worker, if claimed.
-    pub fn claimed_by(&self) -> Option<&WorkerId> {
+    #[must_use]
+    pub const fn claimed_by(&self) -> Option<&WorkerId> {
         match self {
             Self::Claimed { worker, .. } => Some(worker),
             _ => None,
@@ -334,6 +368,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the delivery instant in UTC, if delivered.
+    #[must_use]
     pub const fn delivered_at(&self) -> Option<OffsetDateTime> {
         match self {
             Self::Delivered { delivered_at, .. } => {
@@ -344,6 +379,7 @@ impl DeliverySnapshot {
     }
 
     /// Returns the quarantine instant in UTC, if quarantined.
+    #[must_use]
     pub const fn quarantined_at(&self) -> Option<OffsetDateTime> {
         match self {
             Self::Quarantined { quarantined_at, .. } => {
@@ -354,7 +390,8 @@ impl DeliverySnapshot {
     }
 
     /// Returns the quarantine reason, if quarantined.
-    pub fn quarantine_reason(&self) -> Option<&QuarantineReason> {
+    #[must_use]
+    pub const fn quarantine_reason(&self) -> Option<&QuarantineReason> {
         match self {
             Self::Quarantined { reason, .. } => Some(reason),
             _ => None,
@@ -376,6 +413,10 @@ pub struct ClaimedEvent {
 
 impl ClaimedEvent {
     /// Constructs a claimed event, canonicalizing the expiry timestamp to UTC.
+    ///
+    /// # Errors
+    /// Returns an error if the claim expiry is outside the supported timestamp range
+    /// or has finer than microsecond precision.
     pub fn new(
         tenant_id: TenantId,
         row_id: RowId,
@@ -398,36 +439,43 @@ impl ClaimedEvent {
     }
 
     /// Returns the storage tenant.
-    pub fn tenant_id(&self) -> &TenantId {
+    #[must_use]
+    pub const fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
 
     /// Returns the delivery row identifier.
+    #[must_use]
     pub const fn row_id(&self) -> RowId {
         self.row_id
     }
 
     /// Returns the immutable stored event.
-    pub fn event(&self) -> &StoredEvent {
+    #[must_use]
+    pub const fn event(&self) -> &StoredEvent {
         &self.event
     }
 
     /// Returns the number of attempts recorded at claim time.
+    #[must_use]
     pub const fn attempts(&self) -> AttemptCount {
         self.attempts
     }
 
     /// Returns the opaque fencing token.
-    pub fn claim_token(&self) -> &ClaimToken {
+    #[must_use]
+    pub const fn claim_token(&self) -> &ClaimToken {
         &self.claim_token
     }
 
     /// Returns the worker that owns this claim.
-    pub fn claimed_by(&self) -> &WorkerId {
+    #[must_use]
+    pub const fn claimed_by(&self) -> &WorkerId {
         &self.claimed_by
     }
 
     /// Returns the claim expiry instant in UTC.
+    #[must_use]
     pub const fn claim_expires_at(&self) -> OffsetDateTime {
         self.claim_expires_at.to_offset(time::UtcOffset::UTC)
     }
@@ -445,6 +493,10 @@ pub struct PagedEvent {
 
 impl PagedEvent {
     /// Constructs a paged event, canonicalizing its enqueue timestamp to UTC.
+    ///
+    /// # Errors
+    /// Returns an error if the enqueue time is outside the supported timestamp
+    /// range or has finer than microsecond precision.
     pub fn new(
         tenant_id: TenantId,
         row_id: RowId,
@@ -463,27 +515,32 @@ impl PagedEvent {
     }
 
     /// Returns the storage tenant.
-    pub fn tenant_id(&self) -> &TenantId {
+    #[must_use]
+    pub const fn tenant_id(&self) -> &TenantId {
         &self.tenant_id
     }
 
     /// Returns the delivery row identifier.
+    #[must_use]
     pub const fn row_id(&self) -> RowId {
         self.row_id
     }
 
     /// Returns the immutable stored event.
-    pub fn event(&self) -> &StoredEvent {
+    #[must_use]
+    pub const fn event(&self) -> &StoredEvent {
         &self.event
     }
 
     /// Returns the enqueue instant in UTC.
+    #[must_use]
     pub const fn enqueued_at(&self) -> OffsetDateTime {
         self.enqueued_at.to_offset(time::UtcOffset::UTC)
     }
 
     /// Returns the immutable delivery snapshot.
-    pub fn delivery(&self) -> &DeliverySnapshot {
+    #[must_use]
+    pub const fn delivery(&self) -> &DeliverySnapshot {
         &self.delivery
     }
 }

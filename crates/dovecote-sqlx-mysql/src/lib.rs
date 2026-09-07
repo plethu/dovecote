@@ -1,9 +1,10 @@
-//! MySQL and MariaDB schema and SQLx boundary for Dovecote.
+//! `MySQL` and `MariaDB` schema and `SQLx` boundary for Dovecote.
 #![warn(missing_docs)]
+#![forbid(unsafe_code)]
 //!
 //! The adapter deliberately detects the server family and release before
-//! using dialect-sensitive locking and catalog operations. MySQL success is
-//! not treated as evidence for MariaDB, or the reverse.
+//! using dialect-sensitive locking and catalog operations. `MySQL` success is
+//! not treated as evidence for `MariaDB`, or the reverse.
 
 mod backend;
 mod delivery_state;
@@ -34,34 +35,46 @@ pub use scope::{AdminDovecote, TenantDovecote};
 
 use sqlx::MySqlPool;
 
-/// MySQL/MariaDB adapter for Dovecote's durable event and delivery schema.
+/// `MySQL`/`MariaDB` adapter for Dovecote's durable event and delivery schema.
 #[derive(Clone)]
 pub struct MySqlDovecote {
     pool: MySqlPool,
 }
 
 impl MySqlDovecote {
-    /// Creates an adapter using the supplied SQLx pool.
-    pub fn new(pool: MySqlPool) -> Self {
+    /// Creates an adapter using the supplied `SQLx` pool.
+    #[must_use]
+    pub const fn new(pool: MySqlPool) -> Self {
         Self { pool }
     }
     /// Borrows the pool used by this adapter.
-    pub fn pool(&self) -> &MySqlPool {
+    #[must_use]
+    pub const fn pool(&self) -> &MySqlPool {
         &self.pool
     }
     /// Detects and verifies the configured backend and schema.
+    ///
+    /// # Errors
+    /// Returns an error for an unsupported backend, missing or incompatible
+    /// migration markers, tables, constraints or indexes, or failed catalog reads.
     pub async fn check_schema(&self) -> Result<(), SchemaError> {
         check_schema(&self.pool).await
     }
     /// Detects the backend family, release and capabilities.
+    ///
+    /// # Errors
+    /// Returns an error if server identity or capabilities cannot be determined
+    /// from the database, or the active backend is unsupported.
     pub async fn backend_info(&self) -> Result<BackendInfo, SchemaError> {
         backend::detect(&self.pool).await
     }
     /// Creates an ordinary handle restricted to one tenant.
+    #[must_use]
     pub fn for_tenant(&self, tenant_id: dovecote::TenantId) -> TenantDovecote {
         TenantDovecote::new(self.pool.clone(), tenant_id)
     }
     /// Creates the explicit administrative handle for all-tenant reads and named writes.
+    #[must_use]
     pub fn admin(&self) -> AdminDovecote {
         AdminDovecote::new(self.pool.clone())
     }

@@ -157,7 +157,7 @@ fn captured_mysql_catalog_clauses_match_as_complete_expressions() {
 fn catalog_decoration_and_binary_length_aliases_match() {
     assert!(check_clause_is_plausible(
         "dovecote_events_specversion",
-        r#"(`specversion` = _binary\'1.0\')"#
+        r"(`specversion` = _binary\'1.0\')"
     ));
     assert!(check_clause_is_plausible(
         "dovecote_events_subject_size",
@@ -173,7 +173,7 @@ fn catalog_decoration_and_binary_length_aliases_match() {
 fn generated_identity_expression_matches_catalog_decoration_exactly() {
     let migration = "CONCAT(LPAD(OCTET_LENGTH(tenant_id), 3, '0'), tenant_id, LPAD(OCTET_LENGTH(source), 4, '0'), source, event_id)";
     let catalog = "concat(lpad(octet_length(`tenant_id`),3,_utf8mb4'0'),`tenant_id`,lpad(octet_length(`source`),4,_utf8mb4'0'),`source`,`event_id`)";
-    let mysql_length_catalog = r#"concat(lpad(length(`tenant_id`),3,_utf8mb4\'0\'),`tenant_id`,lpad(length(`source`),4,_utf8mb4\'0\'),`source`,`event_id`)"#;
+    let mysql_length_catalog = r"concat(lpad(length(`tenant_id`),3,_utf8mb4\'0\'),`tenant_id`,lpad(length(`source`),4,_utf8mb4\'0\'),`source`,`event_id`)";
     assert_eq!(
         normalize_generated_expression(migration),
         normalize_generated_expression(catalog)

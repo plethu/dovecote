@@ -12,11 +12,11 @@ pub(crate) async fn resolve_namespace(
     connection: &mut PgConnection,
 ) -> Result<NamespaceInfo, SchemaError> {
     query_as::<_, NamespaceInfo>(
-        r#"
+        r"
         SELECT oid::bigint AS oid, nspname AS name
         FROM pg_namespace
         WHERE nspname = current_schema()
-        "#,
+        ",
     )
     .fetch_optional(&mut *connection)
     .await
@@ -105,12 +105,12 @@ pub(crate) async fn check_columns(
     expected: &[ColumnSpec],
 ) -> Result<(), SchemaError> {
     let columns = query_as::<_, ColumnInfo>(
-        r#"
+        r"
         SELECT column_name, data_type, character_maximum_length,
                is_nullable, column_default, is_identity, identity_generation
         FROM information_schema.columns
         WHERE table_schema = $1 AND table_name = $2
-        "#,
+        ",
     )
     .bind(schema_name)
     .bind(table)

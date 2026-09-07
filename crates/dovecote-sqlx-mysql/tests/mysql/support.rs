@@ -227,7 +227,17 @@ pub(crate) async fn install(pool: &MySqlPool) -> Result<(), Box<dyn std::error::
     // server understands semicolons inside a trigger body when the whole
     // artifact is sent as one COM_QUERY; splitting on semicolons here would
     // also corrupt semicolons in SQL comments.
-    sqlx::raw_sql(MIGRATIONS[0].sql()).execute(pool).await?;
+    let existing_tables: i64 = query_scalar(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name IN ('dovecote_schema', 'dovecote_events', 'dovecote_deliveries')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if existing_tables == 0 {
+        sqlx::raw_sql(MIGRATIONS[0].sql()).execute(pool).await?;
+    }
+    // A repeated run must preserve history and reject a partial or incompatible
+    // installation instead of overwriting it or accepting a marker alone.
+    dovecote_sqlx_mysql::check_schema(pool).await?;
 
     let _ = INSTALL_DONE.set(());
     Ok(())

@@ -3,7 +3,7 @@
 //! This is deliberately not a Kafka Connect or Debezium runner. It models the
 //! row selected by `table.include.list=dovecote_events`, the stable fields
 //! emitted by the Outbox Event Router, and the caller-owned downstream
-//! CloudEvents transform. The fixtures are useful evidence for mapping and
+//! `CloudEvents` transform. The fixtures are useful evidence for mapping and
 //! byte preservation; they do not advertise live connector coverage.
 
 use std::collections::BTreeMap;

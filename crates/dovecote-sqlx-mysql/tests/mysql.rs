@@ -1,6 +1,6 @@
 //! Live MySQL/MariaDB conformance gates.
 //!
-//! The harness intentionally never drops tables: point DOVECOTE_MYSQL_URL at
+//! The harness intentionally never drops tables: point `DOVECOTE_MYSQL_URL` at
 //! a disposable database (the matrix creates one per server run). In
 //! required mode an omitted URL is a failure rather than an accidental skip.
 //!

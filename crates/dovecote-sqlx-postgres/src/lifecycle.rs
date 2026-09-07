@@ -1,4 +1,4 @@
-//! PostgreSQL claims and claim-token-fenced delivery mutations.
+//! `PostgreSQL` claims and claim-token-fenced delivery mutations.
 //!
 //! A claim transaction only selects and updates durable state.  In particular,
 //! no transport or caller code is run while its locks are held.  The returned
@@ -52,7 +52,7 @@ async fn claim_with_entropy<E: EntropySource>(
         .map_err(|source| ClaimError::sql("read claim operation time", source))?;
 
     let candidates = query_as::<_, ClaimCandidate>(
-        r#"
+        r"
         SELECT d.event_row_id,
                d.tenant_id,
                d.state,
@@ -80,7 +80,7 @@ async fn claim_with_entropy<E: EntropySource>(
         ORDER BY d.event_row_id ASC
         LIMIT $3
         FOR UPDATE OF d SKIP LOCKED
-        "#,
+        ",
     )
     .bind(tenant_id.map(TenantId::as_str))
     .bind(operation_time)
@@ -127,7 +127,7 @@ async fn claim_with_entropy<E: EntropySource>(
     let mut claimed = Vec::with_capacity(prepared.len());
     for (tenant_id, row_id, event_row_id, event, attempts, token) in prepared {
         let expiry = query_scalar::<_, OffsetDateTime>(
-            r#"
+            r"
             UPDATE dovecote_deliveries
             SET state = 'claimed',
                 attempts = $3,
@@ -137,7 +137,7 @@ async fn claim_with_entropy<E: EntropySource>(
             WHERE tenant_id = $1 AND event_row_id = $2
               AND (state = 'pending' OR state = 'claimed')
             RETURNING claim_expires_at
-            "#,
+            ",
         )
         .bind(tenant_id.as_str())
         .bind(event_row_id)
@@ -317,21 +317,21 @@ struct ClaimCandidate {
 }
 
 impl ClaimCandidate {
-    fn event_row(&self) -> EventRow {
+    fn event_row(&self) -> EventRow<'_> {
         EventRow {
-            stream: self.stream.clone(),
-            specversion: self.specversion.clone(),
-            event_id: self.event_id.clone(),
-            source: self.source.clone(),
-            event_type: self.event_type.clone(),
-            subject: self.subject.clone(),
+            stream: &self.stream,
+            specversion: &self.specversion,
+            event_id: &self.event_id,
+            source: &self.source,
+            event_type: &self.event_type,
+            subject: self.subject.as_deref(),
             occurred_at: self.occurred_at,
-            datacontenttype: self.datacontenttype.clone(),
-            dataschema: self.dataschema.clone(),
-            partitionkey: self.partitionkey.clone(),
-            extensions: self.extensions.clone(),
-            data_kind: self.data_kind.clone(),
-            data: self.data.clone(),
+            datacontenttype: self.datacontenttype.as_deref(),
+            dataschema: self.dataschema.as_deref(),
+            partitionkey: self.partitionkey.as_deref(),
+            extensions: &self.extensions,
+            data_kind: self.data_kind.as_deref(),
+            data: self.data.as_deref(),
         }
     }
 }

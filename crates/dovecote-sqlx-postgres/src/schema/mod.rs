@@ -1,4 +1,4 @@
-//! PostgreSQL catalog verification for the installed Dovecote schema.
+//! `PostgreSQL` catalog verification for the installed Dovecote schema.
 
 mod catalog;
 mod contracts;
@@ -15,6 +15,10 @@ use contracts::{ConstraintInfo, IndexInfo};
 use sqlx::{PgConnection, PgPool, query_as};
 
 /// Verifies the tables and all columns required by schema version 2.
+///
+/// # Errors
+/// Returns an error for an unsupported backend, missing or incompatible
+/// migration markers, tables, constraints or indexes, or failed catalog reads.
 pub async fn check_schema(pool: &PgPool) -> Result<(), SchemaError> {
     let mut connection = pool
         .acquire()
@@ -44,12 +48,12 @@ pub(crate) async fn check_schema_connection(
     )
     .await?;
     let markers = query_as::<_, SchemaMarker>(
-        r#"
+        r"
         SELECT schema_version, minimum_crate_major, minimum_crate_minor,
                minimum_crate_patch, rolling_compatible
         FROM dovecote_schema
         ORDER BY schema_version DESC
-        "#,
+        ",
     )
     .fetch_all(&mut *connection)
     .await
@@ -131,7 +135,7 @@ pub(crate) async fn check_schema_connection(
     let expected_constraints = contracts::expected_constraints();
 
     let constraints = query_as::<_, ConstraintInfo>(
-        r#"
+        r"
         SELECT table_class.relname AS table_name,
                constraint_class.conname AS name,
                constraint_class.contype::text AS kind,
@@ -164,7 +168,7 @@ pub(crate) async fn check_schema_connection(
         WHERE table_class.relnamespace::bigint = $1
           AND (constraint_class.confrelid = 0 OR parent_class.relnamespace::bigint = $1)
           AND table_class.relname IN ('dovecote_schema', 'dovecote_events', 'dovecote_deliveries')
-        "#,
+        ",
     )
     .bind(namespace.oid)
     .fetch_all(&mut *connection)
@@ -203,7 +207,7 @@ pub(crate) async fn check_schema_connection(
     let expected_indexes = contracts::expected_indexes();
 
     let indexes = query_as::<_, IndexInfo>(
-        r#"
+        r"
         SELECT table_class.relname AS table_name,
                index_class.relname AS name,
                access_method.amname AS access_method,
@@ -246,7 +250,7 @@ pub(crate) async fn check_schema_connection(
         GROUP BY table_class.relname, index_class.relname, access_method.amname,
                  i.indisunique, i.indisvalid, i.indisready, i.indpred IS NOT NULL,
                  i.indnkeyatts, i.indnatts
-        "#,
+        ",
     )
     .bind(namespace.oid)
     .fetch_all(&mut *connection)

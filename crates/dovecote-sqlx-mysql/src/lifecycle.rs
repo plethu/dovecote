@@ -1,4 +1,4 @@
-//! MySQL/MariaDB delivery lifecycle operations.
+//! `MySQL`/`MariaDB` delivery lifecycle operations.
 //!
 //! Claim selection and claim-token-fenced mutations live in separate private
 //! modules so their transaction and state-transition responsibilities remain

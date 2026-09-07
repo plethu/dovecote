@@ -1,4 +1,4 @@
-//! Versioned SQLite migration metadata.
+//! Versioned `SQLite` migration metadata.
 
 /// Schema version implemented by this adapter.
 pub const SCHEMA_VERSION: u32 = 2;
@@ -13,6 +13,7 @@ pub struct CrateVersion {
 
 impl CrateVersion {
     /// Creates a numeric crate version.
+    #[must_use]
     pub const fn new(major: u16, minor: u16, patch: u16) -> Self {
         Self {
             major,
@@ -21,14 +22,17 @@ impl CrateVersion {
         }
     }
     /// Returns the major component.
+    #[must_use]
     pub const fn major(self) -> u16 {
         self.major
     }
     /// Returns the minor component.
+    #[must_use]
     pub const fn minor(self) -> u16 {
         self.minor
     }
     /// Returns the patch component.
+    #[must_use]
     pub const fn patch(self) -> u16 {
         self.patch
     }
@@ -61,6 +65,9 @@ impl MigrationCompatibility {
         Self { minimum, maximum }
     }
     /// Creates a compatibility range, rejecting an upper bound below its lower bound.
+    ///
+    /// # Errors
+    /// Returns an error when the maximum compatible version precedes the minimum.
     pub const fn try_new(
         minimum: CrateVersion,
         maximum: Option<CrateVersion>,
@@ -73,14 +80,17 @@ impl MigrationCompatibility {
         Ok(Self::new(minimum, maximum))
     }
     /// Returns the minimum supported crate version.
+    #[must_use]
     pub const fn minimum(self) -> CrateVersion {
         self.minimum
     }
     /// Returns the maximum supported crate version, when bounded.
+    #[must_use]
     pub const fn maximum(self) -> Option<CrateVersion> {
         self.maximum
     }
     /// Returns whether a crate version is inside this compatibility range.
+    #[must_use]
     pub const fn contains(self, version: CrateVersion) -> bool {
         !version.is_less_than(self.minimum)
             && match self.maximum {
@@ -90,7 +100,7 @@ impl MigrationCompatibility {
     }
 }
 
-/// One immutable, versioned SQLite migration artifact.
+/// One immutable, versioned `SQLite` migration artifact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Migration {
     version: u32,
@@ -113,18 +123,22 @@ impl Migration {
         }
     }
     /// Returns the schema version introduced by this migration.
+    #[must_use]
     pub const fn version(self) -> u32 {
         self.version
     }
     /// Returns the migration SQL exactly as shipped.
+    #[must_use]
     pub const fn sql(self) -> &'static str {
         self.sql
     }
     /// Returns the crate-version compatibility range.
+    #[must_use]
     pub const fn compatibility(self) -> MigrationCompatibility {
         self.compatibility
     }
     /// Returns whether this migration supports rolling deployment.
+    #[must_use]
     pub const fn rolling_compatible(self) -> bool {
         self.rolling_compatible
     }

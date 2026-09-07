@@ -1,4 +1,4 @@
-//! Optional PostgreSQL row-level-security profile for tenant isolation.
+//! Optional `PostgreSQL` row-level-security profile for tenant isolation.
 
 use dovecote::TenantId;
 use sqlx::{Postgres, Transaction, query};
@@ -12,8 +12,12 @@ pub const RLS_PROFILE_SQL: &str = include_str!("../migrations/0002_dovecote_tena
 
 /// Binds a validated tenant to the current transaction for the RLS profile.
 ///
-/// The setting is transaction-local and cannot outlive the supplied SQLx
+/// The setting is transaction-local and cannot outlive the supplied `SQLx`
 /// transaction. It does not replace the adapter's tenant predicates.
+///
+/// # Errors
+/// Returns the database error if binding transaction-local tenant context fails.
+/// The caller must roll back the transaction before retrying.
 pub async fn bind_tenant<'c>(
     transaction: &mut Transaction<'c, Postgres>,
     tenant_id: &TenantId,

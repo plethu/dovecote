@@ -1,14 +1,14 @@
-//! Typed errors at the MySQL/MariaDB adapter boundary.
+//! Typed errors at the `MySQL`/`MariaDB` adapter boundary.
 
 use dovecote::{DeliveryState, RowId};
 use thiserror::Error;
 
-/// MySQL/MariaDB error categories for failures callers may retry as a whole
-/// operation.  The original SQLx error remains available as the source.
+/// `MySQL`/`MariaDB` error categories for failures callers may retry as a whole
+/// operation.  The original `SQLx` error remains available as the source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TransientKind {
-    /// Serialization/current-read failure (`40001`, MariaDB `1020`).
+    /// Serialization/current-read failure (`40001`, `MariaDB` `1020`).
     SerializationFailure,
     /// Deadlock detected (server error `1213`).
     DeadlockDetected,
@@ -33,7 +33,7 @@ impl TransientKind {
         let code = database_error.code()?;
         let number = database_error
             .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
-            .map(|error| error.number());
+            .map(sqlx::mysql::MySqlDatabaseError::number);
         Self::from_code(code.as_ref(), number)
     }
 
@@ -55,7 +55,7 @@ const TENANT_SOURCE_EVENT_ID_KEY: &str = "dovecote_events_tenant_source_event_id
 
 /// Reports whether an insert failed on Dovecote's tenant-scoped identity key.
 ///
-/// SQLx 0.9 exposes MySQL/MariaDB's error number and message, but no duplicate
+/// `SQLx` 0.9 exposes `MySQL`/`MariaDB`'s error number and message, but no duplicate
 /// key field.  The server's `1062`/`23000` packet is therefore the structured
 /// category available to this driver; only its exact `for key '…'` suffix is
 /// parsed.  A primary-key or tenant-row duplicate remains an ordinary `Sql`
@@ -176,7 +176,7 @@ pub enum EnqueueError {
         /// Diagnostic describing the invalid stored data.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -185,7 +185,7 @@ pub enum EnqueueError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -258,7 +258,7 @@ pub enum ImportError {
         /// Diagnostic describing the invalid stored data.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -267,7 +267,7 @@ pub enum ImportError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -318,7 +318,7 @@ pub enum FinalizeError {
         /// Diagnostic describing the invalid stored data.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -327,7 +327,7 @@ pub enum FinalizeError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -407,7 +407,7 @@ pub enum ClaimError {
         /// Diagnostic describing the unsupported backend.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -416,7 +416,7 @@ pub enum ClaimError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -482,7 +482,7 @@ pub enum MutationError {
         /// Diagnostic describing the invalid stored data.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -491,7 +491,7 @@ pub enum MutationError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -520,7 +520,7 @@ pub enum PageError {
         /// Diagnostic describing the unsupported backend.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -529,7 +529,7 @@ pub enum PageError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.
@@ -596,7 +596,7 @@ pub enum SchemaError {
         /// Diagnostic describing the unsupported backend.
         detail: String,
     },
-    /// A non-transient SQLx operation failed.
+    /// A non-transient `SQLx` operation failed.
     #[error("{operation}: {source}")]
     Sql {
         /// Operation being performed when SQL failed.
@@ -605,7 +605,7 @@ pub enum SchemaError {
         /// Original underlying error.
         source: sqlx::Error,
     },
-    /// A retryable SQLx operation failed.
+    /// A retryable `SQLx` operation failed.
     #[error("{operation}: {kind}: {source}")]
     Transient {
         /// Operation being performed when SQL failed.

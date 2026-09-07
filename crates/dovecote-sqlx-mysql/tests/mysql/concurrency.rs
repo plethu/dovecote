@@ -86,7 +86,7 @@ async fn mysql_snapshot_pages_have_a_fixed_bound_and_release_connections()
     assert_eq!(
         live_before
             .iter()
-            .map(|row| row.row_id())
+            .map(dovecote::PagedEvent::row_id)
             .collect::<Vec<_>>(),
         vec![first_id, second_id, later_id]
     );
@@ -102,7 +102,7 @@ async fn mysql_snapshot_pages_have_a_fixed_bound_and_release_connections()
     assert_eq!(
         first_page
             .iter()
-            .map(|row| row.row_id())
+            .map(dovecote::PagedEvent::row_id)
             .collect::<Vec<_>>(),
         vec![first_id, second_id]
     );
@@ -110,7 +110,7 @@ async fn mysql_snapshot_pages_have_a_fixed_bound_and_release_connections()
     assert_eq!(
         second_page
             .iter()
-            .map(|row| row.row_id())
+            .map(dovecote::PagedEvent::row_id)
             .collect::<Vec<_>>(),
         vec![later_id]
     );
@@ -290,7 +290,7 @@ async fn mysql_lock_timeout_is_returned_as_a_typed_transient_error() -> Result<(
             let number = source.as_database_error().and_then(|error| {
                 error
                     .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
-                    .map(|error| error.number())
+                    .map(sqlx::mysql::MySqlDatabaseError::number)
             });
             assert_eq!(number, Some(1205));
         }

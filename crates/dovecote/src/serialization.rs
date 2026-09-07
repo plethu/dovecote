@@ -131,18 +131,27 @@ pub(crate) fn binary_material_bytes(content: &EventContent) -> Result<usize, Val
     add_optional_binary_context(
         &mut size,
         "ce-subject",
-        content.subject.as_ref().map(|value| value.as_str()),
+        content
+            .subject
+            .as_ref()
+            .map(super::value::EventSubject::as_str),
     );
     add_optional_binary_context(&mut size, "ce-time", content.time.map(format_timestamp));
     add_optional_binary_context(
         &mut size,
         "ce-dataschema",
-        content.dataschema.as_ref().map(|value| value.as_str()),
+        content
+            .dataschema
+            .as_ref()
+            .map(super::value::SchemaUri::as_str),
     );
     add_optional_binary_context(
         &mut size,
         "ce-partitionkey",
-        content.partitionkey.as_ref().map(|value| value.as_str()),
+        content
+            .partitionkey
+            .as_ref()
+            .map(super::value::PartitionKey::as_str),
     );
 
     for (name, value) in content.extensions.iter() {
@@ -164,9 +173,10 @@ pub(crate) fn binary_material_bytes(content: &EventContent) -> Result<usize, Val
     Ok(size)
 }
 
-fn add_binary_context(size: &mut usize, name: &str, value: &str) {
+const fn add_binary_context(size: &mut usize, name: &str, value: &str) {
     *size = size
-        .saturating_add(name.len() + 4)
+        .saturating_add(name.len())
+        .saturating_add(4)
         .saturating_add(value.len().saturating_mul(3));
 }
 

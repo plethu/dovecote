@@ -1,4 +1,4 @@
-//! Migration-only import into the MySQL/MariaDB Dovecote tables.
+//! Migration-only import into the `MySQL`/`MariaDB` Dovecote tables.
 //!
 //! The legacy schema is intentionally outside this crate. A migration caller
 //! extracts and validates its source row, then passes a checked event and one
@@ -18,7 +18,7 @@ const MAX_RECORD_CHANGED_RETRIES: u8 = 3;
 /// Imports one event and a portable legacy delivery state in the supplied
 /// transaction. The caller remains responsible for commit or rollback.
 ///
-/// MySQL and MariaDB supply UTC database operation time for `enqueued_at` and
+/// `MySQL` and `MariaDB` supply UTC database operation time for `enqueued_at` and
 /// `available_at`, while DATETIME(6) preserves the supplied delivered instant
 /// at exact microsecond precision. Claims, claim tokens, retries, and
 /// quarantines are not importable.
@@ -52,13 +52,13 @@ pub(crate) async fn import_for_scope<'c>(
             )
         });
     let inserted = match query(
-        r#"
+        r"
         INSERT INTO dovecote_events
             (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
              data_kind, data, enqueued_at)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        "#,
+        ",
     )
     .bind(tenant_id.as_str().as_bytes())
     .bind(event.stream().as_str().as_bytes())
@@ -91,14 +91,14 @@ pub(crate) async fn import_for_scope<'c>(
         let mut retries = 0;
         loop {
             let result = query_as::<_, ExistingEvent>(
-                r#"
+                r"
                 SELECT row_id, stream, specversion, event_id, source, event_type,
                        subject, occurred_at, datacontenttype, dataschema,
                        partitionkey, extensions, data_kind, data, enqueued_at
                 FROM dovecote_events
                 WHERE tenant_id = ? AND source = ? AND event_id = ?
                 FOR UPDATE
-                "#,
+                ",
             )
             .bind(tenant_id.as_str().as_bytes())
             .bind(event.source().as_str().as_bytes())
@@ -151,14 +151,14 @@ pub(crate) async fn import_for_scope<'c>(
     }
 
     let delivery = query_as::<_, ExistingDelivery>(
-        r#"
+        r"
         SELECT state, attempts, claim_token, claimed_by, claim_expires_at,
                last_failure_code, last_failure_detail, delivered_at,
                quarantined_at, quarantine_reason, available_at
         FROM dovecote_deliveries
         WHERE tenant_id = ? AND event_row_id = ?
         FOR UPDATE
-        "#,
+        ",
     )
     .bind(tenant_id.as_str().as_bytes())
     .bind(existing.row_id)
@@ -272,7 +272,7 @@ fn is_record_changed_since_read(source: &sqlx::Error) -> bool {
     source.as_database_error().and_then(|error| {
         error
             .try_downcast_ref::<sqlx::mysql::MySqlDatabaseError>()
-            .map(|error| error.number())
+            .map(sqlx::mysql::MySqlDatabaseError::number)
     }) == Some(1020)
 }
 

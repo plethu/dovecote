@@ -1,4 +1,4 @@
-//! SQLite integration coverage for enqueue, paging, lifecycle, recovery, and concurrency.
+//! `SQLite` integration coverage for enqueue, paging, lifecycle, recovery, and concurrency.
 
 #[path = "sqlite/busy_concurrency.rs"]
 mod busy_concurrency;

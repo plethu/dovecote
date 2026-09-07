@@ -120,7 +120,7 @@ fn structured_projection_vectors_are_parsed_by_external_cloudevents_sdk() {
                     fixture.binary.body,
                     "{}",
                     fixture.name
-                )
+                );
             }
             Some(Data::Json(data)) => assert_eq!(Some(data), raw.get("data"), "{}", fixture.name),
             Some(Data::String(_)) => panic!(

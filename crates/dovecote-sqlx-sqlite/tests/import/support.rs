@@ -1,11 +1,10 @@
-//! Helpers shared by the SQLite migration-import concerns.
+//! Helpers shared by the `SQLite` migration-import concerns.
 
 pub(crate) use super::support::database;
 pub(crate) use dovecote::{
-    ContentType, EnqueueOutcome, EventData, EventId, EventSource, EventSubject, EventType,
-    ExtensionName, ExtensionValue, Extensions, FinalizeOutcome, ImportOutcome,
-    ImportedDeliveryState, NewEvent, PartitionKey, RowId, SchemaUri, StreamName, TenantId,
-    ValidationKind, ValidationOperation,
+    ContentType, EventData, EventId, EventSource, EventSubject, EventType, ExtensionName,
+    ExtensionValue, Extensions, ImportOutcome, ImportedDeliveryState, NewEvent, PartitionKey,
+    SchemaUri, StreamName, TenantId, ValidationKind, ValidationOperation,
 };
 pub(crate) use dovecote_sqlx_sqlite::{ImportError, MIGRATIONS, SqliteDovecote, check_schema};
 pub(crate) use sqlx::{
@@ -14,58 +13,6 @@ pub(crate) use sqlx::{
 pub(crate) use std::path::PathBuf;
 pub(crate) use std::time::Duration;
 pub(crate) use time::{Date, Month, OffsetDateTime, Time, UtcOffset};
-
-#[allow(dead_code)]
-pub(crate) trait TestTenantOps {
-    async fn enqueue<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-    ) -> Result<EnqueueOutcome, dovecote_sqlx_sqlite::EnqueueError>;
-    async fn import_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, dovecote_sqlx_sqlite::ImportError>;
-    async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        row_id: RowId,
-        at: OffsetDateTime,
-    ) -> Result<FinalizeOutcome, dovecote_sqlx_sqlite::FinalizeError>;
-}
-impl TestTenantOps for SqliteDovecote {
-    async fn enqueue<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-    ) -> Result<EnqueueOutcome, dovecote_sqlx_sqlite::EnqueueError> {
-        self.for_tenant(TenantId::new("test").unwrap())
-            .enqueue(tx, event)
-            .await
-    }
-    async fn import_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        event: NewEvent,
-        state: ImportedDeliveryState,
-    ) -> Result<ImportOutcome, dovecote_sqlx_sqlite::ImportError> {
-        self.for_tenant(TenantId::new("test").unwrap())
-            .import_for_migration(tx, event, state)
-            .await
-    }
-    async fn finalize_pending_delivery_for_migration<'c>(
-        &self,
-        tx: &mut sqlx::Transaction<'c, sqlx::Sqlite>,
-        row_id: RowId,
-        at: OffsetDateTime,
-    ) -> Result<FinalizeOutcome, dovecote_sqlx_sqlite::FinalizeError> {
-        self.for_tenant(TenantId::new("test").unwrap())
-            .finalize_pending_delivery_for_migration(tx, row_id, at)
-            .await
-    }
-}
 
 pub(crate) fn event(event_id: &str, event_type: &str) -> NewEvent {
     NewEvent::new(

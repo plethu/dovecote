@@ -134,7 +134,7 @@ pub(crate) fn scalar_event() -> NewEvent {
         EventType::new("com.example.scalar").unwrap(),
     )
     .datacontenttype(ContentType::new("application/vnd.example+json").unwrap())
-    .data(EventData::json(br#"42"#.to_vec()).unwrap())
+    .data(EventData::json(br"42".to_vec()).unwrap())
     .build()
     .unwrap()
 }

@@ -20,13 +20,13 @@ use time::OffsetDateTime;
 /// Finalises one canonical pending migration import in the caller-owned
 /// transaction.
 ///
-/// The caller must provide a SQLite write transaction (normally from
+/// The caller must provide a `SQLite` write transaction (normally from
 /// [`crate::begin_write`]) and remains responsible for commit or rollback.
-/// SQLite's single-writer lock serialises the row inspection and update. An
+/// `SQLite`'s single-writer lock serialises the row inspection and update. An
 /// exact rerun with the same delivered timestamp returns
 /// [`FinalizeOutcome::AlreadyFinalized`]; every other non-canonical, claimed,
 /// failed, quarantined, or timestamp-differing state returns a typed conflict.
-/// SQLite stores Dovecote instants as canonical RFC3339 text with millisecond
+/// `SQLite` stores Dovecote instants as canonical RFC3339 text with millisecond
 /// precision, so a supplied timestamp must be in the common range and have
 /// microsecond precision (the final three digits are zero on this backend).
 pub(crate) async fn finalize_for_scope<'c>(

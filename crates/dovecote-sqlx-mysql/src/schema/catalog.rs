@@ -528,7 +528,7 @@ pub(super) async fn check_indexes(connection: &mut MySqlConnection) -> Result<()
                 i.table_name != table
                     || i.column_name != columns[n]
                     || i.seq_in_index != n as i64 + 1
-                    || i.non_unique != (if unique { 0 } else { 1 })
+                    || i.non_unique != i64::from(!unique)
                     || i.index_type != "BTREE"
                     || i.sub_part.is_some()
             })

@@ -1,10 +1,10 @@
-//! Typed errors at the PostgreSQL adapter boundary.
+//! Typed errors at the `PostgreSQL` adapter boundary.
 
 use dovecote::{DeliveryState, RowId};
 use thiserror::Error;
 
-/// PostgreSQL SQLSTATE categories for failures callers may retry as a whole
-/// operation.  The original SQLx error remains available as the source.
+/// `PostgreSQL` SQLSTATE categories for failures callers may retry as a whole
+/// operation.  The original `SQLx` error remains available as the source.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum TransientKind {
@@ -93,18 +93,18 @@ pub enum EnqueueError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -169,18 +169,18 @@ pub enum ImportError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -223,18 +223,18 @@ pub enum FinalizeError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -306,18 +306,18 @@ pub enum ClaimError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -375,18 +375,18 @@ pub enum MutationError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -407,18 +407,18 @@ pub enum PageError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
@@ -477,18 +477,18 @@ pub enum SchemaError {
     Sql {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },
     #[error("{operation}: {kind}: {source}")]
-    /// A SQL operation failed with a retryable PostgreSQL condition.
+    /// A SQL operation failed with a retryable `PostgreSQL` condition.
     Transient {
         /// The adapter operation that failed.
         operation: &'static str,
-        /// The retryable PostgreSQL failure category.
+        /// The retryable `PostgreSQL` failure category.
         kind: TransientKind,
-        /// The underlying SQLx error.
+        /// The underlying `SQLx` error.
         #[source]
         source: sqlx::Error,
     },

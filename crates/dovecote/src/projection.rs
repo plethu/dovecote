@@ -3,7 +3,7 @@ use crate::{
     validation::format_timestamp,
 };
 
-/// Bytes for a structured CloudEvents message, with member order and timestamp
+/// Bytes for a structured `CloudEvents` message, with member order and timestamp
 /// spelling fixed by Dovecote so durable rows produce repeatable output.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct StructuredJsonProjection {
@@ -11,10 +11,11 @@ pub struct StructuredJsonProjection {
 }
 
 impl StructuredJsonProjection {
-    /// The CloudEvents structured JSON content type.
+    /// The `CloudEvents` structured JSON content type.
     pub const CONTENT_TYPE: &'static str = "application/cloudevents+json";
 
     /// Returns the deterministic UTF-8 structured projection bytes.
+    #[must_use]
     pub fn as_bytes(&self) -> &[u8] {
         &self.bytes
     }
@@ -31,16 +32,18 @@ pub struct BinaryProjection {
 
 impl BinaryProjection {
     /// Returns the exact event body, preserving absent versus empty data.
+    #[must_use]
     pub fn body(&self) -> Option<&[u8]> {
         self.body.as_deref()
     }
 
     /// Returns the optional event data content type.
-    pub fn datacontenttype(&self) -> Option<&ContentType> {
+    #[must_use]
+    pub const fn datacontenttype(&self) -> Option<&ContentType> {
         self.datacontenttype.as_ref()
     }
 
-    /// Iterates over ordered, transport-neutral CloudEvents context attributes.
+    /// Iterates over ordered, transport-neutral `CloudEvents` context attributes.
     pub fn attributes(&self) -> impl Iterator<Item = (&str, &str)> {
         self.attributes
             .iter()
@@ -50,6 +53,10 @@ impl BinaryProjection {
 
 impl StoredEvent {
     /// Produces the repeatable structured message sent by a structured-mode transport.
+    ///
+    /// # Errors
+    /// Returns an error if the event cannot be serialized within the portable size
+    /// representation.
     pub fn structured_json(&self) -> Result<StructuredJsonProjection, ValidationError> {
         Ok(StructuredJsonProjection {
             bytes: crate::serialization::structured_json_bytes(&self.content)?,
@@ -57,6 +64,7 @@ impl StoredEvent {
     }
 
     /// Produces transport-neutral binary fields for a binary-mode transport.
+    #[must_use]
     pub fn binary(&self) -> BinaryProjection {
         BinaryProjection {
             body: self.data().map(|data| data.as_bytes().to_vec()),

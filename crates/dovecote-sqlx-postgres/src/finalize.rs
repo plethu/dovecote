@@ -22,7 +22,7 @@ use time::OffsetDateTime;
 /// delivery row are locked before the state is inspected. An exact rerun with
 /// the same delivered timestamp returns [`FinalizeOutcome::AlreadyFinalized`];
 /// every other non-canonical, claimed, failed, quarantined, or timestamp-
-/// differing state returns a typed conflict. PostgreSQL stores these instants
+/// differing state returns a typed conflict. `PostgreSQL` stores these instants
 /// at microsecond precision, which is also enforced by Dovecote validation.
 pub(crate) async fn finalize_for_scope<'c>(
     transaction: &mut Transaction<'c, Postgres>,

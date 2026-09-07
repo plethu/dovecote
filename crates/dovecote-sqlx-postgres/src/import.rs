@@ -1,4 +1,4 @@
-//! Migration-only import into the PostgreSQL Dovecote tables.
+//! Migration-only import into the `PostgreSQL` Dovecote tables.
 //!
 //! This module deliberately accepts a caller-owned transaction and a
 //! validated [`dovecote::NewEvent`]. It does not read or name a legacy schema;
@@ -56,7 +56,7 @@ pub(crate) async fn import_for_scope<'c>(
         )
     });
     let inserted = query_as::<_, InsertedEvent>(
-        r#"
+        r"
         INSERT INTO dovecote_events
             (tenant_id, stream, specversion, event_id, source, event_type, subject,
              occurred_at, datacontenttype, dataschema, partitionkey, extensions,
@@ -64,7 +64,7 @@ pub(crate) async fn import_for_scope<'c>(
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         ON CONFLICT (tenant_id, source, event_id) DO NOTHING
         RETURNING row_id
-        "#,
+        ",
     )
     .bind(tenant_id.as_str())
     .bind(event.stream().as_str())
@@ -72,11 +72,11 @@ pub(crate) async fn import_for_scope<'c>(
     .bind(event.id().as_str())
     .bind(event.source().as_str())
     .bind(event.event_type().as_str())
-    .bind(event.subject().map(|value| value.as_str()))
+    .bind(event.subject().map(dovecote::EventSubject::as_str))
     .bind(event.time())
-    .bind(event.datacontenttype().map(|value| value.as_str()))
-    .bind(event.dataschema().map(|value| value.as_str()))
-    .bind(event.partitionkey().map(|value| value.as_str()))
+    .bind(event.datacontenttype().map(dovecote::ContentType::as_str))
+    .bind(event.dataschema().map(dovecote::SchemaUri::as_str))
+    .bind(event.partitionkey().map(dovecote::PartitionKey::as_str))
     .bind(event.extensions().canonical_json())
     .bind(data_kind)
     .bind(data)
@@ -129,13 +129,13 @@ pub(crate) async fn import_for_scope<'c>(
     }
 
     let delivery = query_as::<_, DeliveryRow>(
-        r#"
+        r"
         SELECT state, attempts, claim_token, claimed_by, claim_expires_at,
                last_failure_code, last_failure_detail, delivered_at,
                quarantined_at, quarantine_reason, available_at
         FROM dovecote_deliveries
         WHERE tenant_id = $1 AND event_row_id = $2
-        "#,
+        ",
     )
     .bind(tenant_id.as_str())
     .bind(existing.row_id)
