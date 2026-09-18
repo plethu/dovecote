@@ -17,8 +17,8 @@ while read -r package baseline; do
       --baseline-version "$baseline" --release-type "$mode" "$features"
   done
 done <<'BASELINES'
-dovecote 0.2.2
-dovecote-sqlx-postgres 0.2.2
-dovecote-sqlx-mysql 0.2.2
-dovecote-sqlx-sqlite 0.2.2
+dovecote 0.2.3
+dovecote-sqlx-postgres 0.2.3
+dovecote-sqlx-mysql 0.2.3
+dovecote-sqlx-sqlite 0.2.3
 BASELINES
