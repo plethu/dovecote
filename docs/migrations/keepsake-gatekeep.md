@@ -79,7 +79,7 @@ the owning project's documented versioned migration codec; its deterministic
 output is a reconstruction and must not be labelled as an original database
 byte sequence. The complete-history fixture's independent
 `tests/fixtures/reconstructed-payload-golden-v1.json` records the four v1
-reference outputs and their digests. The current 3.0 sibling crates no longer
+reference outputs and their digests. The maintained sibling crates no longer
 export those retired codecs, so the fixture compares normalized source values
 and the recorded digest rather than silently treating its checked-in payload
 as a newly generated current-project value.
@@ -120,7 +120,7 @@ values:
 
 Policy evaluation itself remains clock-free. A 1.x historical row without a
 current producer identity still uses the migration-only IDs documented above;
-that compatibility mapping is separate from the current 3.0 event identity.
+that compatibility mapping is separate from the tenant-scoped event identity.
 
 Every legacy audit occurrence through the recorded high-water mark is copied,
 including rows without an outbox payload and delivered history. Never trust a legacy claim across the cutover: it

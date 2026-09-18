@@ -1,11 +1,7 @@
-# Dovecote acceptance specification
+# Dovecote contracts
 
-- Status: accepted design for initial implementation
-- Specification date: 16 August 2026
-- Durable schema version: 2
-- CloudEvents compatibility target: 1.0
-- Initial MSRV: Rust 1.94
-- Licence: `MIT OR Apache-2.0`
+Durable schema version: 2. CloudEvents compatibility target: 1.0.
+Toolchain and package versions live in the Cargo manifests.
 
 ## 1. Purpose and authority
 
@@ -15,12 +11,9 @@ deliver it later. It owns durable insertion, deterministic inspection, leased
 claims, claim-token fencing, retry state, and quarantine. It does not deliver
 messages itself.
 
-This document is the acceptance contract for Dovecote's first implementation.
-It is standalone: an implementer must not need the earlier ecosystem plan to
-resolve an API, schema, lifecycle, interoperability, migration, or testing
-decision described here.
-
-Dovecote is the canonical project and package-family name.
+This reference defines the event, storage, delivery, and migration contracts.
+Start with the [README](README.md) for usage or [architecture](docs/architecture.md)
+for the crate boundaries.
 
 Normative words such as **MUST**, **MUST NOT**, **SHOULD**, and **MAY** carry
 their usual RFC 2119 meanings.
@@ -86,9 +79,9 @@ The package family is:
 | `dovecote-sqlx-mysql` | MySQL and MariaDB schemas, migrations, dialect handling, enqueue and migration import, claims, lifecycle mutations, and paging. |
 | `dovecote-sqlx-sqlite` | SQLite schema, migrations, enqueue and migration import, claims, lifecycle mutations, paging, and bounded busy handling. |
 
-All crates use `MIT OR Apache-2.0`. The workspace declares Rust 1.94 as its
-initial MSRV and tests that MSRV in CI. Raising the MSRV follows the published
-MSRV policy and is not coupled to durable schema versions.
+All crates use `MIT OR Apache-2.0`. CI tests the minimum Rust version declared
+in the workspace manifest. Raising it follows the [release policy](docs/releases.md#compatibility)
+and is independent of durable schema versions.
 
 The `dovecote` crate MUST be synchronous, runtime-free, and SQLx-free. It MAY
 depend privately on focused parsing or serialization crates, but public event,
@@ -1653,28 +1646,11 @@ Tests verify:
 - Keepsake and Gatekeep coexist under distinct streams; and
 - delivered legacy rows remain untouched.
 
-### 14.8 Documentation and release gate
+### 14.8 Release checks
 
-Before the first release, documentation includes:
-
-- the non-guarantees in section 2 near the first usage example;
-- crate semver, MSRV, durable schema, and projection-format versioning policy;
-- the exact tested backend matrix;
-- schema installation and `check_schema` instructions;
-- the fake-transport recovery example from section 11;
-- HTTP, Kafka, NATS, Event Grid, and Debezium mappings;
-- payload-size and operational-field privacy boundaries;
-- bounded backpressure, graceful shutdown, operational signals, and
-  OpenTelemetry integration guidance;
-- the application-owned retention/deletion runbook and tenant-isolation
-  boundary;
-- rolling schema compatibility and `check_schema` version-pair policy;
-- the complete Keepsake/Gatekeep migration runbook; and
-- a responsible security reporting route.
-
-The implementation, schema, race suite, golden vectors, CDC mapping, and
-migration runbook receive an independent review before the first crate is
-published. Empty name-reservation releases are forbidden.
+The [release procedure](docs/releases.md) owns publication checks and ordering.
+[SECURITY.md](SECURITY.md) defines security reporting and independent review
+requirements.
 
 ## 15. Versioning policy
 

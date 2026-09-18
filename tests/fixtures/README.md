@@ -41,7 +41,7 @@ digest is the SHA-256 of UTF-8 JSON serialized from the explicitly ordered
 `context`. `occurred_at` is normalized with the RFC 3339 formatter and
 `context` is decoded as a sorted string map before serialization. Gatekeep
 hashes the UTF-8 JSON serialization of its normalized entry value.
-The current 3.0 crates intentionally do not provide the retired codec API.
+The maintained crates no longer provide the retired codec API.
 
 For manifest-scoped Cargo commands in the local fallback layout, Cargo also
 needs the lexical sibling name expected by Gatekeep. The migration harness

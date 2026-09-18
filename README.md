@@ -18,7 +18,7 @@ Build the event, then enqueue it in the transaction that owns the application
 change:
 
 ```rust
-use dovecote::{ContentType, EventData, EventId, EventSource, EventType, NewEvent, StreamName, TenantId};
+use dovecote::{EventId, EventSource, EventType, NewEvent, StreamName, TenantId};
 use dovecote_sqlx_postgres::PostgresDovecote;
 use sqlx::PgPool;
 
@@ -29,8 +29,7 @@ async fn record(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
         EventSource::new("https://example.test/audit")?,
         EventType::new("com.example.audit.recorded")?,
     )
-    .datacontenttype(ContentType::new("application/json")?)
-    .data(EventData::json(br#"{"ok":true}"#.to_vec())?)
+    .json_data(br#"{"ok":true}"#.to_vec())?
     .build()?;
 
     let adapter = PostgresDovecote::new(pool.clone())

@@ -177,6 +177,20 @@ impl NewEventBuilder {
         self
     }
 
+    /// Sets JSON data and its `application/json` media type together.
+    ///
+    /// Preserves the supplied bytes, including whitespace and key order. Replaces
+    /// any previously supplied data and content type; later setters may override
+    /// either, with cross-field validation still performed by [`Self::build`].
+    ///
+    /// # Errors
+    /// Returns an error if the bytes are not valid JSON.
+    pub fn json_data(mut self, bytes: impl Into<Vec<u8>>) -> Result<Self, ValidationError> {
+        self.content.data = Some(EventData::json(bytes.into())?);
+        self.content.datacontenttype = Some(ContentType::new("application/json")?);
+        Ok(self)
+    }
+
     /// Finalizes the builder with the default portable size limit.
     ///
     /// # Errors

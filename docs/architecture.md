@@ -72,10 +72,8 @@ mutations, and live and finite snapshot paging. SQLite write and claim paths use
 `BEGIN IMMEDIATE`; its caller transaction must already own the writer slot, and
 its bounded `BusyConfig` has a total lock-wait budget of at most
 `(retries + 1) * timeout`. Snapshot pages retain one finite read transaction
-and use database-generated millisecond timestamps. The 0.2.0 backend and
-migration evidence is recorded in the [support matrix](support-matrix.md);
-CDC remains an optional, separately advertised integration and is not live
-evidence for the database adapters.
+and use database-generated millisecond timestamps. The [support matrix](support-matrix.md) describes backend settings and
+migration constraints. See [integration mappings](integrations.md) for CDC.
 SQLite deployments bound snapshot page/time budgets because retained read
 snapshots can delay vacuum or cleanup; abandoned pagers are explicitly closed
 or rolled back and reconciliation restarts from a new snapshot/checkpoint.

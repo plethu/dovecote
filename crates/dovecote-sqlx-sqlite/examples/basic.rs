@@ -5,8 +5,7 @@
 //! caller-transaction enqueue, token-fenced retry/ack, and finite paging.
 
 use dovecote::{
-    ContentType, Delay, EventData, EventId, EventSource, EventType, Failure, Lease, Limit,
-    NewEvent, StreamName, WorkerId,
+    Delay, EventId, EventSource, EventType, Failure, Lease, Limit, NewEvent, StreamName, WorkerId,
 };
 use dovecote_sqlx_sqlite::{MIGRATIONS, SqliteDovecote};
 use sqlx::{raw_sql, sqlite::SqlitePoolOptions};
@@ -36,8 +35,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
         EventSource::new("https://example.test/sqlite")?,
         EventType::new("com.example.recorded")?,
     )
-    .datacontenttype(ContentType::new("application/json")?)
-    .data(EventData::json(br#"{"ok":true}"#.to_vec())?)
+    .json_data(br#"{"ok":true}"#.to_vec())?
     .build()?;
 
     // The application row and Dovecote rows share one caller-owned commit.

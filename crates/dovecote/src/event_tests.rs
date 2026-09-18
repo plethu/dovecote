@@ -280,3 +280,55 @@ fn portable_size_accepts_exact_boundary_only() {
             .is_err()
     );
 }
+
+#[test]
+fn json_builder_preserves_bytes_and_replaces_the_previous_content_type() {
+    let bytes = br#" { "z": 1, "a": [true, null] } "#;
+    let value = NewEvent::builder(
+        StreamName::new("audit").unwrap(),
+        EventId::new("json").unwrap(),
+        EventSource::new("https://example.test/source").unwrap(),
+        EventType::new("com.example.audit").unwrap(),
+    )
+    .datacontenttype(ContentType::new("text/plain").unwrap())
+    .data(EventData::binary(b"old".to_vec()))
+    .json_data(bytes.as_slice())
+    .unwrap()
+    .build()
+    .unwrap()
+    .into_stored()
+    .unwrap();
+
+    assert_eq!(value.data().unwrap().as_bytes(), bytes);
+    assert!(value.data().unwrap().is_json());
+    assert_eq!(
+        value.datacontenttype().unwrap().as_str(),
+        "application/json"
+    );
+}
+
+#[test]
+fn json_builder_rejects_invalid_json_and_incompatible_later_overrides() {
+    let builder = NewEvent::builder(
+        StreamName::new("audit").unwrap(),
+        EventId::new("json").unwrap(),
+        EventSource::new("https://example.test/source").unwrap(),
+        EventType::new("com.example.audit").unwrap(),
+    );
+    assert!(builder.clone().json_data(b"{".as_slice()).is_err());
+    assert!(builder.clone().json_data(b"".as_slice()).is_err());
+    assert!(builder.clone().json_data(b"null false".as_slice()).is_err());
+    let value = builder.json_data(b"null".as_slice()).unwrap();
+    assert!(
+        value
+            .clone()
+            .datacontenttype(ContentType::new("text/plain").unwrap())
+            .build()
+            .is_err()
+    );
+    assert!(
+        value
+            .build_with_limit(EventSizeLimit::new(1).unwrap())
+            .is_err()
+    );
+}

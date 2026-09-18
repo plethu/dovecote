@@ -1,16 +1,10 @@
 # Contributing to Dovecote
 
-Dovecote is a pre-1.0 project (`0.2.x`). The accepted contract is
-[SPEC.md](SPEC.md); the public API, SQL schema, migration rules, and release
-evidence are part of the same review surface.
+Dovecote is a pre-1.0 transactional outbox. Start with the
+[SQLite example](crates/dovecote-sqlx-sqlite/examples/basic.rs) to follow an event
+from enqueue through retry and acknowledgement.
 
-## Before changing the repository
-
-Read the relevant contract and inspect the current consumers before editing a
-public type, durable value, migration, or projection. Keep the core crate
-runtime-free and SQLx-free. Keep backend-specific transaction and locking
-behaviour in its concrete adapter. Do not add a common repository trait just to
-make the adapters look alike.
+## Setup and checks
 
 The repository uses the pinned tools in `.mise.toml`:
 
@@ -20,20 +14,21 @@ mise run fmt
 mise run check
 ```
 
-The check task includes formatting, structural checks, all-target/all-feature
-Clippy, workspace tests, TOML and spelling checks, the SQLite migration smoke
-test, the Debezium reference fixture, package archive construction, and a
-whitespace check. It also runs the RustSec-backed cargo-deny advisory, ban,
-license, and source checks; `deny.toml` records the dependency policy. These
-checks are not an independent audit or a compliance claim. Run focused tests
-as well when changing a backend or public contract. Examples and rustdoc are
-part of the public API and must compile under the repository's documented
-gates.
+`mise run check` runs the canonical local gate defined in
+[`scripts/check-project-gates.sh`](scripts/check-project-gates.sh). For a focused
+test, use `mise exec -- just test <filter> -- --nocapture`; use
+`mise exec -- just clippy` for Rust checks.
 
-For focused checks, use `mise exec -- just clippy` or
-`mise exec -- just test <filter>`. The canonical gate also checks unused crate
-dependencies with cargo-machete. Production-only restrictions are kept separate
-from test assertions; the check scripts define the exact coverage.
+## Finding your way around
+
+- `crates/dovecote` owns validated events, delivery states, and projections.
+- The three `crates/dovecote-sqlx-*` adapters own their database's transactions,
+  locking, and schema checks.
+- [Architecture](docs/architecture.md) explains those boundaries;
+  [SPEC.md](SPEC.md) defines the detailed contracts.
+- `tests/fixture-runner` exercises historical Keepsake and Gatekeep migrations.
+
+## Migration fixtures
 
 The standalone migration runner has its own workspace. To check it against this
 checkout, first prepare its ignored sibling path from the repository root:
@@ -50,7 +45,7 @@ lane when the fixture dependency is available and visibly skips it otherwise.
 The complete-history harness also prepares the documented local sibling layout
 and validates historical migration hashes before touching a database.
 
-## Database evidence
+## Database tests
 
 Live database tests are required when a backend claim or release is being
 reviewed. Set the URL and the matching required flag explicitly:
@@ -73,12 +68,6 @@ the MySQL/MariaDB adapter uses `DOVECOTE_MYSQL_URL`. `*_REQUIRED=1` makes a
 missing URL an error. In CI or release mode, an unset URL is also an error
 unless the backend's matching `*_OPTIONAL=1` flag is deliberately set for a
 non-target job. SQLite uses its linked SQLx runtime and does not use a URL.
-
-These flags select whether a test may skip; they do not advertise a backend.
-Database advertisement additionally requires the exact CI image, conformance
-and migration evidence, package verification, and independent review. CDC has
-a separate release decision; the checked-in Debezium properties file is a
-reference fixture and not live connector evidence.
 
 The destructive v1-to-v2 MySQL/MariaDB upgrade fixture is ignored during the
 ordinary suite because it drops and recreates its tables. Run it only against a
@@ -130,10 +119,5 @@ promotional prose. Do not add agent attribution trailers.
 
 ## Publishing
 
-The [release procedure](docs/releases.md) records the required CI jobs, sibling
-fixture revisions, compatibility boundary and publication evidence.
-
-Publish `dovecote` first and wait for crates.io to serve the new version. Then
-run `DOVECOTE_VERIFY_PUBLISHED_ADAPTERS=1 mise run check`. That mode packages
-each SQLx adapter normally against the registry core, without `--no-verify`.
-Publish an adapter only after that check passes.
+Follow the [release procedure](docs/releases.md) for backend verification,
+package checks, and publication order.

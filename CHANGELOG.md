@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Add `NewEventBuilder::json_data` to validate JSON bytes and set their media type
+  together without changing the stored payload.
+
 ## [0.2.2] - 2026-09-07
 
 - Share each backend's stored-event validator between enqueue replay, paging

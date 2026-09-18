@@ -107,19 +107,8 @@ Until those fixtures pass for each advertised backend, CDC is an integration
 option under application ownership, not a release claim. Dovecote does not run
 Debezium, Kafka Connect, or a schema registry.
 
-The checked-in projection vectors under
-`crates/dovecote/tests/fixtures/projections.json` and their HTTP/Kafka/NATS
-helpers are local reference mappings over Dovecote's transport-neutral public
-projection. The exact structured JSON is additionally validated against the
-official [CloudEvents v1.0.2 JSON Schema](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/formats/cloudevents.json)
-with the external `jsonschema` validator and parsed with the external
-[`cloudevents-sdk`](https://docs.rs/cloudevents-sdk/0.9.0/) implementation. The
-SDK probe normalizes media-type parameters only for its parser compatibility
-gap; the official schema validates the parsed form of the exact projection and
-all six data cases,
-including UTF-8 text, arbitrary binary, present-empty, and absent data.
-These checks validate the structured event format, not HTTP/Kafka/NATS broker
-execution, live Debezium, converter behaviour, or transport delivery.
-The vendored schema is the tagged upstream path above and is pinned by SHA-256
-`e28a6d252d7b7238d176618f6bbf6cde570b26a867bc5241563aed34c9dd1d83`; the test
-asserts that digest before validation.
+The [projection fixtures](../crates/dovecote/tests/fixtures/projections.json)
+check transport mappings, the CloudEvents JSON Schema, and parsing with an
+external SDK. The [Debezium fixture guide](debezium/fixtures.md) describes the
+converter assumptions. These are local format checks; they do not exercise a
+broker or a live connector.
