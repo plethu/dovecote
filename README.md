@@ -4,24 +4,13 @@
 >
 > — Ursula K. Le Guin, “The Carrier Bag Theory of Fiction” (1986)
 
-`dovecote` is a transactional outbox for Rust applications. It writes a
-validated CloudEvents-compatible event in the same database transaction as
-application state, then keeps its delivery state for an application-owned
-worker. In schema version 2, durable event identity is scoped to the tenant
-handle as `(tenant_id, source, id)`.
+`dovecote` stores an event in the same database transaction as your application
+change. Your worker claims it, sends it, then acknowledges delivery. Failed
+attempts can be retried without losing the original event.
 
-Claims are leased, and only the matching claim token can change a delivery.
-Delivery is at least once. For one tenant, consumers can deduplicate on
-`(source, id)`; a shared destination must include the tenant routing domain.
-Your application runs the worker, chooses the transport, and applies
-migrations. Dovecote promises neither FIFO nor exactly-once delivery.
-
-> [!WARNING]
-> Dovecote is pre-release (`0.2.x`). Expect the Rust API, durable schema, and
-> migration tooling to change before v1. Backend support is version-specific;
-> see the [support matrix](docs/support-matrix.md). Existing Keepsake
-> deployments on MariaDB use the documented [maintenance-window migration
-> route](docs/migrations/keepsake-gatekeep.md#mariadb-maintenance-window-route-for-existing-keepsake-deployments).
+Dovecote is pre-1.0; API and schema changes may require migration. See the
+[backend requirements](docs/support-matrix.md) and
+[migration guide](docs/migrations/keepsake-gatekeep.md) before deploying it.
 
 ## A transaction
 
@@ -58,7 +47,17 @@ async fn record(pool: PgPool) -> Result<(), Box<dyn std::error::Error>> {
 ```
 
 The commit makes the application change and event visible together. Publication
-happens later, through a worker owned by the application.
+happens later, through your worker. Delivery is at least once, so consumers must
+deduplicate by tenant, source and event ID. Leased claim tokens fence delivery
+updates; Dovecote does not promise FIFO or exactly-once delivery.
+
+Try the complete SQLite example without setting up a server:
+
+```sh
+cargo run -p dovecote-sqlx-sqlite --example basic
+```
+
+It covers enqueue, claim, acknowledgement, retry and bounded history paging.
 
 The core `dovecote` crate is synchronous and has no runtime or SQLx dependency.
 Its SQLx adapters support PostgreSQL, MySQL/MariaDB, and SQLite without hiding
@@ -74,9 +73,8 @@ their different transaction, locking, clock, or migration behaviour.
 - The [migration runbook](docs/migrations/keepsake-gatekeep.md) moves existing
   [Keepsake](https://github.com/plethu/keepsake) and
   [Gatekeep](https://github.com/plethu/gatekeep) data into Dovecote.
-- [1.0 readiness](docs/1.0-readiness.md),
-  [contributing](CONTRIBUTING.md), and [security](SECURITY.md) cover the project
-  itself.
+- [Contributing](CONTRIBUTING.md) covers development;
+  [security](SECURITY.md) explains private vulnerability reporting.
 
 ## Development
 

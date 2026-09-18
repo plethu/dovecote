@@ -1,20 +1,13 @@
 # Publishing a Dovecote release
 
-The current candidate is 0.2.2 for `dovecote` and its PostgreSQL, MySQL/MariaDB
-and SQLite adapters. It retains the 0.2 public API and durable schema version 2;
-no database migration is required from 0.2.1. Historical SQL artifacts remain
-unchanged. A dated changelog entry describes the candidate, not evidence that
-packages have been published.
-
 ## Evidence before publication
 
-Review the final revision and record its canonical CI run. All ten jobs in
-`.github/workflows/check.yml` must pass: `postgres`, `mysql-84`,
-`mysql-innovation`, `mariadb` and `sqlite`, each on Rust 1.94.0 and stable.
-The stable jobs additionally run the complete-history fixtures. MariaDB uses
-the documented maintenance-window transition from 10.3.17 to 11.8.6.
-The [support matrix](support-matrix.md) records the exact images and settings;
-its historical release results do not establish a new candidate's CI status.
+Run the canonical checks and the backend matrix defined in
+`.github/workflows/check.yml` on the release revision, including the declared
+minimum Rust version, stable Rust and complete-history fixtures. The
+[support matrix](support-matrix.md) describes backend settings and migration
+constraints. Keep run results with the release, rather than copying them into
+these instructions.
 
 Stable jobs require two repository variables containing reviewed, reachable
 40-hex commit SHAs:
@@ -27,7 +20,6 @@ crates.io versions and from a decision to release either sibling project. The
 harness validates historical migration hashes before touching its database;
 a source checkout cannot replace the published-artifact compatibility proof.
 Keep existing reviewed pins unless the fixture needs a different revision.
-Changes to repository variables require their own authorization.
 
 Record the independent review and verify the private reporting route as required
 by [SECURITY.md](../SECURITY.md). Inspect the package archives and preserved
@@ -54,3 +46,17 @@ Keepsake and Gatekeep publication follows their own dependency order. A local
 path dependency on Dovecote is not proof that their normalized packages resolve
 from crates.io. Do not recreate a package or tag that already exists; inspect
 its identity and publication outcome before recovering an interrupted release.
+
+## Compatibility
+
+Crate APIs, minimum Rust versions, SQL schemas and CloudEvents encodings are
+separate contracts. Describe breaking changes and migration requirements in the
+changelog. Published SQL artifacts are immutable; schema changes need forward
+migrations and a recovery path. Wire changes need updated deterministic vectors
+and compatibility tests. Backend and CDC claims require their respective live
+fixtures.
+
+Before 1.0, establish the public API baseline for semver checks. After 1.0,
+raising the minimum Rust version requires at least a minor release and checks on
+the previous and new toolchains. The declared versions live in Cargo manifests
+and CI, not in a second status table.

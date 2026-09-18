@@ -8,8 +8,9 @@ fmt:
 clippy:
     scripts/check-rust.sh
 
+[positional-arguments]
 test *args:
-    cargo test --workspace --all-features {{args}}
+    cargo test --workspace --all-features "$@"
 
 check:
     scripts/check-project-gates.sh

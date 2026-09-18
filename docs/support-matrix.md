@@ -1,15 +1,7 @@
 # Backend support matrix
 
-The following release evidence is historical. Candidate 0.2.2 must satisfy the
-[release procedure](releases.md) on its own final revision before publication;
-local alignment checks do not replace the required CI matrix.
-
-Evidence snapshot: 2026-08-28. All four Dovecote 0.2.0 crates are published and
-registry-verified. The
-[canonical CI run](https://github.com/plethu/dovecote/actions/runs/33216232011)
-passed every named job at revision
-`cc079c73d01eb07602344d7da0dcd2019b01bc7c`; the table pairs that run with the
-bounded local backend checks used for the release.
+Backend requirements are listed below; CI owns the exact test images and Rust
+toolchain matrix. Release results belong with the corresponding release.
 
 All jobs use SQLx 0.9.0 and run the workspace against Rust 1.94.0 (the MSRV)
 and latest stable Rust. The backend job sets only its own `*_REQUIRED=1`
@@ -17,28 +9,18 @@ variable; other live adapter suites receive their `*_OPTIONAL=1` variable and
 skip. This makes a green job attributable to one backend rather than to an
 accidental service or a missing URL.
 
-| Backend | Exact CI target | Required settings recorded by the test contract | Current evidence |
-| --- | --- | --- | --- |
-| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override; schema v2 tenant predicates and optional RLS profile | The 0.2.0 release checks passed 43/43 serialized backend tests, including the configured live RLS role-boundary proof, plus the complete-history fixture. |
-| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | The 0.2.0 release checks passed 25/25 backend tests and the complete-history fixture. A disposable v1-to-v2 activation, preflight, interruption, and rerun rehearsal also passed. |
-| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series | The 0.2.0 release checks passed 24/24 backend tests and the complete-history fixture. |
-| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB | The 0.2.0 release checks passed 25/25 backend tests, five repeated competing-import races, and the complete-history maintenance path from MariaDB 10.3.17 to 11.8.6. A disposable v1-to-v2 activation, preflight, interruption, and rerun rehearsal also passed. Existing Keepsake deployments use the maintenance-window route below. |
-| SQLite | SQLx linked runtime `3.46.0` | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots | The 0.2.0 release checks and complete-history fixture passed on the linked runtime. |
+| Backend | Exact CI target | Required settings recorded by the test contract |
+| --- | --- | --- |
+| PostgreSQL | `postgres:17.11` | `READ COMMITTED`; finite statement/lock waits; lock-timeout fixture uses a 50 ms session override; schema v2 tenant predicates and optional RLS profile |
+| MySQL 8.4 LTS | `mysql:8.4.11` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB |
+| MySQL Innovation | `mysql:26.7.0` | same MySQL settings; the image tag is pinned independently of the moving Innovation series |
+| MariaDB LTS | `mariadb:11.8.6` | `REPEATABLE-READ`; `time_zone=+00:00`; strict SQL mode without `NO_AUTO_VALUE_ON_ZERO`; `utf8mb4` client/connection/results and an `utf8mb4_*` collation; InnoDB |
+| SQLite | SQLx linked runtime `3.46.0` | foreign keys on every connection; `BEGIN IMMEDIATE`; default `BusyConfig` is 5 s × (3 retries + initial attempt) = 20 s maximum lock-wait budget; deployments set explicit page/time budgets for retained snapshots |
 
-## Local opt-in high-cardinality evidence
+## Additional checks
 
-The ignored `DOVECOTE_HIGH_CARDINALITY=1` fixture passed locally before the
-release: PostgreSQL 17.11 completed 1/1 in 3.10 seconds, and SQLite
-linked runtime 3.46.0 completed 1/1 in 1.14 seconds. Each run populated 10,000
-tenants with one shared CloudEvents `(source, event_id)` identity per tenant,
-then added 64 events for one hot tenant: 10,064 event rows and 10,064 delivery
-rows. These are bounded, disposable local opt-in results, not CI evidence, a
-hardware-independent latency SLO, or a general throughput claim.
-
-The 0.2.0 complete-history matrix covers SQLite, PostgreSQL 17.11,
-MySQL 8.4.11, MySQL Innovation 26.7.0, and the MariaDB 10.3.17 to 11.8.6
-maintenance-window route. These are reproducible release checks, not
-machine-independent performance evidence or a deployment SLO.
+Set `DOVECOTE_HIGH_CARDINALITY=1` to enable the ignored many-tenant fixtures.
+Their local timings are workload measurements, not a deployment SLO.
 
 The three adapters also expose the migration-only
 `import_for_migration` and `finalize_pending_delivery_for_migration`
@@ -89,9 +71,8 @@ or that every MariaDB release is interchangeable. Existing Keepsake users must
 follow the [maintenance-window route in the migration runbook](migrations/keepsake-gatekeep.md#mariadb-maintenance-window-route-for-existing-keepsake-deployments),
 including a verified backup, claim resolution or fencing, complete-history
 import, zero-delta reconciliation, and read-only retention of legacy tables.
-The 0.1.1 evidence supports that exact maintenance-window route on MariaDB
-11.8.6. It does not support replaying the historical Keepsake migration directly
-on MariaDB 11.8.6.
+Do not replay the historical Keepsake migration directly on MariaDB 11.8.6;
+use the maintenance-window route for retained legacy data.
 
 ## Database release gate
 

@@ -32,9 +32,8 @@ gates.
 
 For focused checks, use `mise exec -- just clippy` or
 `mise exec -- just test <filter>`. The canonical gate also checks unused crate
-dependencies with cargo-machete. The [maintainability review](docs/maintainability.md)
-records checked ownership boundaries and deliberate differences from generic
-lint defaults.
+dependencies with cargo-machete. Production-only restrictions are kept separate
+from test assertions; the check scripts define the exact coverage.
 
 The standalone migration runner has its own workspace. To check it against this
 checkout, first prepare its ignored sibling path from the repository root:
@@ -67,8 +66,8 @@ DOVECOTE_MYSQL_URL=mysql://root:password@127.0.0.1:3306/dovecote_test \
 ```
 
 The MySQL adapter detects MySQL versus MariaDB from the server. Test those
-servers separately; a MySQL result is not MariaDB evidence. The exact required
-images, session settings, and current evidence are in the
+servers separately; a MySQL result is not MariaDB evidence. The required
+server versions and session settings are in the
 [support matrix](docs/support-matrix.md). PostgreSQL uses `DOVECOTE_POSTGRES_URL`;
 the MySQL/MariaDB adapter uses `DOVECOTE_MYSQL_URL`. `*_REQUIRED=1` makes a
 missing URL an error. In CI or release mode, an unset URL is also an error
