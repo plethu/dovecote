@@ -9,6 +9,6 @@ if [[ ! -f tests/sibling-worktrees/carrier/crates/dovecote/Cargo.toml ]]; then
 fi
 manifest=tests/fixture-runner/Cargo.toml
 cargo fmt --manifest-path "$manifest" -- --check
-cargo clippy --manifest-path "$manifest" --all-targets -- -D warnings
-cargo test --manifest-path "$manifest"
+cargo clippy --manifest-path "$manifest" --locked --all-targets -- -D warnings
+cargo test --manifest-path "$manifest" --locked
 cargo machete --with-metadata tests/fixture-runner
