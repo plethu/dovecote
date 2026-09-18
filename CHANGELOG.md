@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [0.2.3] - 2026-09-18
 
 - Add `NewEventBuilder::json_data` to validate JSON bytes and set their media type
   together without changing the stored payload.
