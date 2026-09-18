@@ -24,3 +24,6 @@ supply-chain:
 
 check-migration-runner:
     scripts/check-migration-runner.sh
+
+check-public-api mode="minor":
+    scripts/check-public-api.sh {{ mode }}

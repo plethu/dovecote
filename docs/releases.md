@@ -56,7 +56,8 @@ migrations and a recovery path. Wire changes need updated deterministic vectors
 and compatibility tests. Backend and CDC claims require their respective live
 fixtures.
 
-Before 1.0, establish the public API baseline for semver checks. After 1.0,
+`just check-public-api` compares public APIs with the published baselines in
+`scripts/check-public-api.sh`; update them after publication. After 1.0,
 raising the minimum Rust version requires at least a minor release and checks on
 the previous and new toolchains. The declared versions live in Cargo manifests
 and CI, not in a second status table.

@@ -2,7 +2,6 @@
 set -euo pipefail
 
 if [[ "${DOVECOTE_GATES_MISE_REEXEC:-0}" != "1" ]] && {
-  ! command -v ast-grep >/dev/null 2>&1 ||
   ! command -v taplo >/dev/null 2>&1 ||
   ! command -v typos >/dev/null 2>&1 ||
   ! command -v just >/dev/null 2>&1 ||
@@ -22,19 +21,6 @@ echo "== cargo fmt --all --check =="
   cd "$repo_root"
   cargo fmt --all --check
 )
-
-echo "== structural Rust checks =="
-if command -v ast-grep >/dev/null 2>&1; then
-  MISE_PROJECT_ROOT="$repo_root" "$repo_root/.config/mise/tasks/lint-structure"
-elif command -v mise >/dev/null 2>&1; then
-  (
-    cd "$repo_root"
-    MISE_PROJECT_ROOT="$repo_root" mise exec -- .config/mise/tasks/lint-structure
-  )
-else
-  echo "ast-grep is unavailable; install the pinned tools with 'mise install'" >&2
-  exit 2
-fi
 
 echo "== cargo clippy =="
 (

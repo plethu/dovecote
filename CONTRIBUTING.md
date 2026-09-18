@@ -121,3 +121,13 @@ promotional prose. Do not add agent attribution trailers.
 
 Follow the [release procedure](docs/releases.md) for backend verification,
 package checks, and publication order.
+
+## API compatibility
+
+Run `mise exec -- just check-public-api` before changing public APIs. CI runs
+this separately from the local `check` gate because it builds published baselines
+from crates.io. The pinned versions live in `scripts/check-public-api.sh`;
+default, no-default, and all-feature surfaces are compared. Update those
+baselines after publication. Use `just check-public-api major` only for an
+intentional breaking release; major mode permits breaks and is not a compatibility
+check. Database and wire compatibility remain covered by their own tests.

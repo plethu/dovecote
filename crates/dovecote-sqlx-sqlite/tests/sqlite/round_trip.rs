@@ -246,7 +246,6 @@ async fn data_variants_and_all_tagged_extension_types_round_trip() {
         .extensions(extensions.clone());
         // These optional event fields are independent; declaration order is
         // not policy.
-        // ast-grep-ignore: rust-if-let-policy-cascade
         if let Some(content_type) = content_type {
             builder = builder.datacontenttype(ContentType::new(content_type).unwrap());
         }
