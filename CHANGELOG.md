@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- `dovecote-sqlx-sqlite` accepts `libsqlite3-sys` `>=0.30.1, <0.41`, matching
+  SQLx 0.9.1, so applications can resolve the bundled SQLite fix for
+  RUSTSEC-2026-0459 (`libsqlite3-sys` 0.39 or later). No API or schema change.
+- Update the workspace lockfile for url, tokio, crypto-bigint and ctutils
+  advisories, and record a dated exception for the dev-only chrono
+  unmaintained advisory.
+
 ## [0.2.3] - 2026-09-18
 
 - Add `NewEventBuilder::json_data` to validate JSON bytes and set their media type
