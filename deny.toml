@@ -9,7 +9,13 @@ version = 2
 # workspace begins a private-key RSA operation. Remove the exception then.
 # RUSTSEC-2023-0071 covers private-key timing leakage; SQLx uses this path only
 # to encrypt a password with the server's public key.
-ignore = ["RUSTSEC-2023-0071"]
+#
+# RUSTSEC-2026-0543 marks chrono unmaintained with no safe upgrade. It reaches
+# this workspace only through cloudevents-sdk, a dev-dependency used for
+# CloudEvents conformance tests; no published Dovecote crate depends on it.
+# Review by 2027-03-31, or sooner if cloudevents-sdk drops chrono or the
+# conformance tests can use another reference implementation.
+ignore = ["RUSTSEC-2023-0071", "RUSTSEC-2026-0543"]
 
 [bans]
 multiple-versions = "warn"

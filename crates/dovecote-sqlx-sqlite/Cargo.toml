@@ -14,7 +14,7 @@ categories.workspace = true
 [dependencies]
 dovecote.workspace = true
 getrandom.workspace = true
-libsqlite3-sys = { version = "0.30.1", default-features = false }
+libsqlite3-sys = { version = ">=0.30.1, <0.41", default-features = false }
 sqlx = { workspace = true, features = ["sqlite", "time", "macros"] }
 sqlx-core = { version = "0.9.0", default-features = false }
 thiserror.workspace = true
