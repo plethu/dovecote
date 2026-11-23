@@ -1,0 +1,104 @@
+name: dependency audit
+
+# Daily RustSec audit of the default branch. Opens or updates one tracking issue
+# when advisories appear, hands new findings to the dependency-triage workflow,
+# and closes the issue once the lockfiles are clean again.
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install project tools
+        uses: jdx/mise-action@v4
+
+      - name: Audit lockfiles
+        id: audit
+        run: |
+          set +e
+          : > audit.txt
+          status=0
+          for manifest in Cargo.toml; do
+            echo "### ${manifest%/Cargo.toml}" >> audit.txt
+            mise exec -- cargo deny --manifest-path "$manifest" \
+              check advisories > deny.log 2>&1
+            code=$?
+            grep -E '^(error|warning)\[|^ *├ (ID|Solution):|^ *├ [A-Za-z0-9_-]+ v[0-9]' deny.log \
+              | grep -v 'advisory-not-detected' >> audit.txt
+            if [[ $code -ne 0 ]]; then status=1; fi
+          done
+          fingerprint="$(grep -oE 'RUSTSEC-[0-9]{4}-[0-9]{4}' audit.txt | sort -u | sha256sum | cut -c1-16)"
+          echo "failed=$status" >> "$GITHUB_OUTPUT"
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+          cat audit.txt
+
+      - name: Ensure labels
+        run: |
+          gh label create dependencies --color 0366d6 --description "Dependency updates and advisories" --force
+          gh label create security --color b60205 --description "Security advisory" --force
+          gh label create dependency-audit --color 5319e7 --description "Opened by the scheduled dependency audit" --force
+          gh label create needs-decision --color fbca04 --description "Waiting on a maintainer decision" --force
+
+      - name: Open, update or close the tracking issue
+        env:
+          FAILED: ${{ steps.audit.outputs.failed }}
+          FINGERPRINT: ${{ steps.audit.outputs.fingerprint }}
+        run: |
+          existing="$(gh issue list --state open --label dependency-audit --json number,body --limit 1)"
+          number="$(jq -r '.[0].number // empty' <<<"$existing")"
+          previous="$(jq -r '.[0].body // ""' <<<"$existing" | grep -oE 'fingerprint: [0-9a-f]+' | cut -d' ' -f2 || true)"
+
+          if [[ "$FAILED" != "1" ]]; then
+            if [[ -n "$number" ]]; then
+              gh issue comment "$number" --body "The scheduled audit on \`${GITHUB_SHA::7}\` found no advisories. Closing."
+              gh issue close "$number" --reason completed
+            fi
+            exit 0
+          fi
+
+          {
+            echo "The scheduled \`cargo deny check advisories\` run on \`${GITHUB_SHA::7}\` failed."
+            echo
+            echo '```'
+            cat audit.txt
+            echo '```'
+            echo
+            echo "Run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+            echo
+            echo "<!-- fingerprint: ${FINGERPRINT} -->"
+          } > body.md
+
+          if [[ -z "$number" ]]; then
+            url="$(gh issue create --title "Dependency advisories on the default branch" \
+              --label dependencies --label security --label dependency-audit --body-file body.md)"
+            number="${url##*/}"
+          elif [[ "$previous" != "$FINGERPRINT" ]]; then
+            gh issue edit "$number" --body-file body.md
+            gh issue comment "$number" --body "The set of advisories changed; the issue body now reflects run ${GITHUB_RUN_ID}."
+          else
+            echo "Issue #$number already tracks these advisories."
+            exit 0
+          fi
+
+          # Issues created with GITHUB_TOKEN do not trigger other workflows, so
+          # dispatch triage explicitly for new or changed findings.
+          gh workflow run dependency-triage.yml -f issue="$number"

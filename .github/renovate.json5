@@ -1,0 +1,42 @@
+{
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: ['config:recommended'],
+  labels: ['dependencies'],
+  // Routine update PRs arrive in one weekly batch; security fixes ignore it.
+  schedule: ['before 6am on monday'],
+  prConcurrentLimit: 5,
+  // Weekly Cargo.lock refresh. Cargo's MSRV-aware resolver keeps the result
+  // within the workspace rust-version.
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ['before 6am on monday'],
+  },
+  // OSV covers direct dependencies only. The scheduled dependency-audit
+  // workflow covers transitive advisories through cargo-deny.
+  osvVulnerabilityAlerts: true,
+  vulnerabilityAlerts: {
+    labels: ['dependencies', 'security'],
+    schedule: ['at any time'],
+  },
+  // The migration fixture runner resolves sibling Keepsake and Gatekeep
+  // checkouts that Renovate cannot see.
+  ignorePaths: ['tests/fixture-runner/**'],
+  packageRules: [
+    {
+      // The pinned Rust toolchain checks the declared minimum Rust version.
+      // Raising it is a deliberate compatibility decision.
+      matchManagers: ['mise'],
+      matchPackageNames: ['rust'],
+      enabled: false,
+    },
+    {
+      // Raising a published crate's dependency requirement changes what
+      // consumers must resolve; keep those PRs separate and clearly labelled.
+      matchManagers: ['cargo'],
+      matchFileNames: ['crates/**'],
+      matchDepTypes: ['dependencies'],
+      matchUpdateTypes: ['major', 'minor'],
+      addLabels: ['public-dependency'],
+    },
+  ],
+}
