@@ -117,6 +117,25 @@ or responsibility for the resulting contract. Check generated changes against
 the repository and remove unsupported claims, invented citations, and generic
 promotional prose. Do not add agent attribution trailers.
 
+## Dependency maintenance
+
+Dependency work is flagged and triaged without maintainer input:
+
+- Renovate (`.github/renovate.json5`) opens weekly update and lockfile
+  maintenance PRs, and security PRs at any time. It never raises the pinned Rust
+  toolchain and labels requirement raises in published crates
+  `public-dependency`. The migration fixture runner is excluded because it
+  resolves sibling checkouts.
+- The daily `dependency audit` workflow runs `cargo deny check advisories`,
+  including transitive dependencies that Renovate's advisory data does not
+  cover. It keeps one `dependency-audit` issue open while advisories remain and
+  closes it when they clear.
+- The `dependency triage` workflow runs a Claude Code agent when an issue gets
+  the `dependencies` label, when the audit reports new findings, and when
+  `check` fails on a Renovate branch. It opens PRs for semver-compatible fixes
+  and labels anything else `needs-decision`. It never merges, approves, edits
+  `deny.toml` ignores or sibling pins, or raises the toolchain.
+
 ## Publishing
 
 Follow the [release procedure](docs/releases.md) for backend verification,
